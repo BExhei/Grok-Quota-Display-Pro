@@ -6,6 +6,7 @@
 // @author       BExhei
 // @match        https://grok.com/*
 // @grant        GM_addStyle
+// @license      MIT
 // ==/UserScript==
 
 (function() {
