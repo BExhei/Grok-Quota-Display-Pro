@@ -38,7 +38,7 @@ A clean and feature-rich Tampermonkey userscript that displays real-time chat an
    - or [Violentmonkey](https://violentmonkey.github.io/)
 
 2. Install the script:
-   - Click the install link (recommended)
+   - **[Click here to install from Greasyfork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro)** (Recommended)
    - Or manually create a new script and paste the code
 
 ## Usage
