@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.0
 // @description  Grok quota display with theme toggle at bottom right
-// @author       Grok
+// @author       BExhei
 // @match        https://grok.com/*
 // @grant        GM_addStyle
 // ==/UserScript==
