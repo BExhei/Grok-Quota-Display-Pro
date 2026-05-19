@@ -17,7 +17,7 @@
 
     const PANEL_ID = 'grok-quota-pro';
     const REFRESH_MS = 60 * 1000;
-    const VERSION = '3.4';
+    const VERSION = '2.0';
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
     const L = {
