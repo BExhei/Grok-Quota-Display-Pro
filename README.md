@@ -1,32 +1,64 @@
-# Grok Quota Display
+# Grok Quota Monitor Pro
 
-A clean and simple Tampermonkey userscript that displays your Grok quotas in a floating panel.
+A clean and feature-rich Tampermonkey userscript that displays real-time chat and image generation quotas on [grok.com](https://grok.com).
+
+![版本](https://img.shields.io/badge/version-2.0-blue)
+![语言](https://img.shields.io/badge/语言-中英双语-brightgreen)
+![License](https://img.shields.io/badge/license-GPL--3.0-orange)
 
 ## Features
-- Clean left-right layout
-- Prominent remaining quota numbers
-- Dark mode + one-click theme toggle (☀️ / 🌙)
-- Auto refreshes every 5 minutes
-- Remembers your theme preference
+
+- **Real-time Quota Monitoring**
+  - Chat quotas: Fast, Expert, and Heavy (Heavy is only shown for eligible accounts)
+  - Image generation quotas (Imagine)
+- **Smart Subscription Detection**
+  - Automatically detects your current plan (SuperGrok, SuperGrok Heavy, Premium+, Logged in, or Guest)
+  - Improved detection accuracy even when inside conversations
+- **Interactive Floating Panel**
+  - Draggable panel positioned at the bottom-right
+  - One-click minimize / expand
+  - Dark and Light theme toggle
+  - Toggle visibility of Text quotas and Image quotas separately
+- **Visual Quota Status**
+  - Color-coded remaining quotas (Green = sufficient, Orange = warning, Red = low)
+  - Displays both remaining and total values (e.g. `120 / 200`)
+- **Auto Refresh**
+  - Automatically refreshes quota data every 60 seconds
+  - Manual refresh button available
+  - Only refreshes when the page is visible
+- **Bilingual Support**
+  - Automatically displays interface in Chinese or English based on your browser language
+- **Persistent Settings**
+  - Your preferences (shown sections, theme, minimized state) are saved automatically
 
 ## Installation
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/)
-2. Open Tampermonkey dashboard → **Create a new script**
-3. Paste the entire content of `grok-quota-display.user.js`
-4. Save the script (`Ctrl + S`)
-5. Visit [https://grok.com](https://grok.com)
+1. Install a userscript manager:
+   - [Tampermonkey](https://www.tampermonkey.net/)
+   - or [Violentmonkey](https://violentmonkey.github.io/)
 
-The quota panel will appear at the bottom right corner.
+2. Install the script:
+   - Click the install link (recommended)
+   - Or manually create a new script and paste the code
 
 ## Usage
-- Click **Refresh** to manually update quotas
-- Click **☀️** to switch between dark and light theme
-- The panel automatically refreshes every 5 minutes
 
-## Notes
-- Quotas are on a rolling 18-hour window
-- Theme preference is saved locally
+1. Visit [https://grok.com](https://grok.com) after installation.
+2. A floating quota panel will appear in the bottom-right corner.
+3. The top of the panel shows your detected subscription tier.
+4. Use the buttons in the header to:
+   - Refresh quotas manually
+   - Switch between dark and light theme
+   - Minimize or expand the panel
+5. Click the category buttons ("Text" / "Image") to show or hide corresponding sections.
+
+## Technical Notes
+
+- The script fetches quota data directly from Grok's official APIs.
+- Subscription tier is detected via page content with improved logic for chat interfaces.
+- All settings are persisted using `GM_setValue` and `localStorage`.
+- Fully client-side implementation with no external backend required.
 
 ## License
-MIT
+
+This project is licensed under the [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) License.
