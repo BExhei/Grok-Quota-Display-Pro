@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.1
+// @version 2.1.1
 // @description Grok quota monitor (fixed tooltip clipping + proper case)
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
@@ -10,6 +10,8 @@
 // @grant GM_setValue
 // @grant GM_getValue
 // @license GPL-3.0
+// @downloadURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
+// @updateURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
 // ==/UserScript==
 
 (function () {
@@ -17,7 +19,7 @@
 
     const PANEL_ID = 'grok-quota-pro';
     const REFRESH_MS = 60 * 1000;
-    const VERSION = '2.1';
+    const VERSION = '2.1.1';
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
     const L = {
@@ -36,12 +38,12 @@
         unlockHeavy: LANG === 'zh' ? '需 SuperGrok Heavy' : 'SuperGrok Heavy only',
         available: LANG === 'zh' ? '可用' : 'Available',
         unavailable: LANG === 'zh' ? '不可用' : 'Unavailable',
-        imagineHelpText: LANG === 'zh' 
+        imagineHelpText: LANG === 'zh'
             ? '因为 Grok 禁用了查询接口，所以无法检测图像的实际配额数字。如果后续出现新接口，我会尽快更新脚本。'
             : 'Because Grok has disabled the query interface, the actual quota numbers for images cannot be detected. The script will be updated as soon as a new interface becomes available.'
     };
 
-    const imagineKeyMap = LANG === 'zh' 
+    const imagineKeyMap = LANG === 'zh'
         ? {
             image: '图像 (Image)',
             imagePro: '图像 Pro (Image Pro)',
@@ -418,7 +420,7 @@
     }
 
     GM_addStyle(`
-        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:260px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 16px 32px rgba(0,0,0,.55);overflow:hidden;user-select:none}
+        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:260px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);overflow:hidden;user-select:none}
         #${PANEL_ID}.light{--bg:#fff;--bg2:#fafafa;--bg3:#f4f4f5;--border:#e4e4e7;--text:#18181b;--sub:#52525b;--hint:#a1a1aa;--ok:#16a34a;--warn:#ea580c;--danger:#dc2626}
         #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:9px 12px 8px;background:var(--bg2);border-bottom:1px solid var(--border)}
         #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.92}
