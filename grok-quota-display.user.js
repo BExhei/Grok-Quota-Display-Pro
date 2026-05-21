@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
-// @namespace https://github.com/BExhei/grok-quota-display
+// @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
 // @version 2.1
 // @description Grok quota monitor (fixed tooltip clipping + proper case)
 // @author BExhei
