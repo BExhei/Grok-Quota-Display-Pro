@@ -1,15 +1,15 @@
 // ==UserScript==
-// @name         Grok Quota Display Pro
-// @namespace    https://github.com/optimized-grok-scripts
-// @version      2.0
-// @description  Grok quota monitor (fixed subscription detection)
-// @author       BExhei
-// @icon         https://www.google.com/s2/favicons?sz=64&domain=grok.com
-// @match        https://grok.com/*
-// @grant        GM_addStyle
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @license      GPL-3.0
+// @name Grok Quota Display Pro
+// @namespace https://github.com/BExhei/grok-quota-display
+// @version 2.1
+// @description Grok quota monitor (fixed tooltip clipping + proper case)
+// @author BExhei
+// @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
+// @match https://grok.com/*
+// @grant GM_addStyle
+// @grant GM_setValue
+// @grant GM_getValue
+// @license GPL-3.0
 // ==/UserScript==
 
 (function () {
@@ -17,12 +17,12 @@
 
     const PANEL_ID = 'grok-quota-pro';
     const REFRESH_MS = 60 * 1000;
-    const VERSION = '2.0';
+    const VERSION = '2.1';
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
     const L = {
         chatTitle: LANG === 'zh' ? '聊天配额 / Chat Quotas' : 'Chat Quotas',
-        imagineTitle: LANG === 'zh' ? '图像生成配额 / Imagine' : 'Imagine Quotas',
+        imagineTitle: LANG === 'zh' ? '图像生成配额 / Imagine Quotas' : 'Imagine Quotas',
         fast: LANG === 'zh' ? '快速 (Fast)' : 'Fast',
         expert: LANG === 'zh' ? '专家 (Expert)' : 'Expert',
         heavy: LANG === 'zh' ? '重度 (Heavy)' : 'Heavy',
@@ -34,7 +34,28 @@
         textCategory: LANG === 'zh' ? '文字类' : 'Text',
         imageCategory: LANG === 'zh' ? '图片类' : 'Image',
         unlockHeavy: LANG === 'zh' ? '需 SuperGrok Heavy' : 'SuperGrok Heavy only',
+        available: LANG === 'zh' ? '可用' : 'Available',
+        unavailable: LANG === 'zh' ? '不可用' : 'Unavailable',
+        imagineHelpText: LANG === 'zh' 
+            ? '因为 Grok 禁用了查询接口，所以无法检测图像的实际配额数字。如果后续出现新接口，我会尽快更新脚本。'
+            : 'Because Grok has disabled the query interface, the actual quota numbers for images cannot be detected. The script will be updated as soon as a new interface becomes available.'
     };
+
+    const imagineKeyMap = LANG === 'zh' 
+        ? {
+            image: '图像 (Image)',
+            imagePro: '图像 Pro (Image Pro)',
+            imageEdit: '图像编辑 (Image Edit)',
+            video: '视频 (Video)',
+            video720p: '视频 720p (Video 720p)'
+          }
+        : {
+            image: 'Image',
+            imagePro: 'Image Pro',
+            imageEdit: 'Image Edit',
+            video: 'Video',
+            video720p: 'Video 720p'
+          };
 
     const cfg = {
         get showText() { return GM_getValue('grok_show_text', true); },
@@ -47,33 +68,28 @@
         set minimized(v) { localStorage.setItem('grokQuotaMin', v ? '1' : '0'); },
     };
 
+    let tooltipEl = null;
+
     function detectSubscription() {
         try {
             const fullText = document.body.innerText.toLowerCase();
-
             const loginBtn = document.querySelector('a[href*="login"], button[aria-label*="sign" i], [data-testid*="login"]');
             if (loginBtn && !fullText.includes('supergrok')) {
                 return { tier: L.guest, color: '#6b7280', canUseHeavy: false };
             }
-
             const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
             const headerText = headerEl ? headerEl.innerText.toLowerCase() : '';
-
             const isHeavy = (headerText.includes('supergrok heavy') || headerText.includes('grok heavy')) ||
                             (fullText.includes('supergrok heavy') && headerText.includes('heavy'));
-
             if (isHeavy) {
                 return { tier: 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true };
             }
-
             if (fullText.includes('supergrok')) {
                 return { tier: 'SuperGrok', color: '#047857', canUseHeavy: false };
             }
-
             if (fullText.includes('premium+') || fullText.includes('premium plus')) {
                 return { tier: 'Premium+', color: '#1d4ed8', canUseHeavy: false };
             }
-
             return { tier: L.loggedIn, color: '#4b5563', canUseHeavy: false };
         } catch {
             return { tier: L.loggedIn, color: '#4b5563', canUseHeavy: false };
@@ -83,21 +99,29 @@
     async function fetchChatQuota(kind) {
         try {
             const res = await fetch('https://grok.com/rest/rate-limits', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ modelName: kind }), credentials: 'include'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelName: kind }),
+                credentials: 'include'
             });
             return res.ok ? await res.json() : { error: true };
-        } catch { return { error: true }; }
+        } catch {
+            return { error: true };
+        }
     }
 
     async function fetchImagineQuota() {
         try {
             const res = await fetch('https://grok.com/rest/media/imagine/quota_info', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: '{}', credentials: 'include'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+                credentials: 'include'
             });
             return res.ok ? await res.json() : { error: true };
-        } catch { return { error: true }; }
+        } catch {
+            return { error: true };
+        }
     }
 
     async function fetchAllQuotas(sub) {
@@ -106,7 +130,9 @@
             fetchChatQuota('fast').then(d => chat.fast = d),
             fetchChatQuota('expert').then(d => chat.expert = d)
         ];
-        if (sub.canUseHeavy) tasks.push(fetchChatQuota('heavy').then(d => chat.heavy = d));
+        if (sub.canUseHeavy) {
+            tasks.push(fetchChatQuota('heavy').then(d => chat.heavy = d));
+        }
         await Promise.all(tasks);
         const imagine = await fetchImagineQuota();
         return { chat, imagine, timestamp: Date.now(), sub };
@@ -125,8 +151,12 @@
     }
 
     function buildQuotaRow(label, info, hint) {
-        if (hint) return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-hint">${hint}</span></div>`;
-        if (!info || info.error) return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-val c-danger">${L.refreshFail}</span></div>`;
+        if (hint) {
+            return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-hint">${hint}</span></div>`;
+        }
+        if (!info || info.error) {
+            return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-val c-danger">${L.refreshFail}</span></div>`;
+        }
         const rem = info.remainingQueries ?? info.remaining ?? 'N/A';
         const total = info.totalQueries ?? info.total ?? null;
         const cls = valClass(rem, total);
@@ -144,19 +174,30 @@
 
     function buildImagineSection(imagine) {
         if (!cfg.showImagine) return '';
-        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.imagineTitle}</div>`;
+        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.imagineTitle} <span class="gqp-help">?</span></div>`;
         if (!imagine || imagine.error) {
             return html + `<div class="gqp-hint" style="padding:4px 2px">${L.refreshFail}</div></div>`;
         }
         const entries = Object.entries(imagine).filter(([, v]) => v != null);
-        if (!entries.length) html += `<div class="gqp-hint" style="padding:4px 2px">—</div>`;
-        else {
+        if (!entries.length) {
+            html += `<div class="gqp-hint" style="padding:4px 2px">—</div>`;
+        } else {
             for (const [key, val] of entries) {
-                const rem = val?.remainingQueries ?? val?.remaining ?? val;
-                const total = val?.totalQueries ?? val?.total ?? null;
-                const cls = valClass(rem, total);
-                const tot = total != null ? `<span class="gqp-total">/ ${total}</span>` : '';
-                html += `<div class="gqp-row"><span class="gqp-name">${key}</span><span class="gqp-num"><span class="gqp-val ${cls}">${rem ?? '—'}</span>${tot}</span></div>`;
+                let displayValue = '—';
+                let cls = '';
+
+                if (val && typeof val === 'object') {
+                    if (val.available === true) {
+                        displayValue = L.available;
+                        cls = 'c-ok';
+                    } else {
+                        displayValue = L.unavailable;
+                        cls = 'c-danger';
+                    }
+                }
+
+                const displayKey = imagineKeyMap[key] || key;
+                html += `<div class="gqp-row"><span class="gqp-name">${displayKey}</span><span class="gqp-num"><span class="${cls}" style="font-size:12.5px;font-weight:500;">${displayValue}</span></span></div>`;
             }
         }
         return html + '</div>';
@@ -168,17 +209,21 @@
         return `<div class="gqp-toggles"><button class="gqp-tbtn ${t}" data-tid="text">${L.textCategory}</button><button class="gqp-tbtn ${i}" data-tid="img">${L.imageCategory}</button></div>`;
     }
 
-    function getPanel() { return document.getElementById(PANEL_ID); }
+    function getPanel() {
+        return document.getElementById(PANEL_ID);
+    }
 
     function applyTheme() {
-        const p = getPanel(); if (!p) return;
+        const p = getPanel();
+        if (!p) return;
         p.classList.toggle('light', cfg.theme === 'light');
         const btn = p.querySelector('#gqp-theme');
         if (btn) btn.textContent = cfg.theme === 'light' ? '🌙' : '☀️';
     }
 
     function applyMinimized() {
-        const p = getPanel(); if (!p) return;
+        const p = getPanel();
+        if (!p) return;
         const body = p.querySelector('.pbody');
         if (body) body.style.display = cfg.minimized ? 'none' : '';
         const tog = p.querySelector('.gqp-toggles');
@@ -189,15 +234,21 @@
 
     function updateBadge(sub) {
         const el = getPanel()?.querySelector('.badge');
-        if (el) { el.style.background = sub.color; el.textContent = sub.tier; }
+        if (el) {
+            el.style.background = sub.color;
+            el.textContent = sub.tier;
+        }
     }
 
     function updateContent(data) {
-        const p = getPanel(); if (!p) return;
+        const p = getPanel();
+        if (!p) return;
         const body = p.querySelector('.pbody');
         if (body) body.innerHTML = buildChatSection(data.chat, data.sub) + buildImagineSection(data.imagine);
 
-        const old = p.querySelector('.gqp-toggles'); if (old) old.remove();
+        const old = p.querySelector('.gqp-toggles');
+        if (old) old.remove();
+
         const footer = p.querySelector('.pfooter');
         const tog = Object.assign(document.createElement('div'), { innerHTML: buildToggles() }).firstElementChild;
         if (footer) p.insertBefore(tog, footer);
@@ -206,17 +257,73 @@
             btn.addEventListener('click', () => {
                 if (btn.dataset.tid === 'text') cfg.showText = !cfg.showText;
                 else cfg.showImagine = !cfg.showImagine;
-                updateContent(data); applyMinimized();
+                updateContent(data);
+                applyMinimized();
             });
         });
+
+        const helpIcon = p.querySelector('.gqp-help');
+        if (helpIcon) {
+            helpIcon.addEventListener('mouseenter', showTooltip);
+            helpIcon.addEventListener('mouseleave', hideTooltip);
+        }
 
         const ts = new Date(data.timestamp).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
         if (footer) footer.innerHTML = `<span>${L.lastUpdate}: ${ts}</span><span class="fver">v${VERSION}</span>`;
     }
 
+    function showTooltip(e) {
+        hideTooltip();
+
+        tooltipEl = document.createElement('div');
+        tooltipEl.style.cssText = `
+            position: fixed;
+            background: #f0f0f0;
+            color: #222;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 12.5px;
+            font-weight: 400;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            width: 320px;
+            max-width: 340px;
+            z-index: 9999999;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+            border: 1px solid #ddd;
+            pointer-events: none;
+        `;
+        tooltipEl.textContent = L.imagineHelpText;
+
+        document.body.appendChild(tooltipEl);
+
+        const rect = e.target.getBoundingClientRect();
+        const tooltipRect = tooltipEl.getBoundingClientRect();
+
+        let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+        let top = rect.top - tooltipRect.height - 8;
+
+        if (left < 10) left = 10;
+        if (left + tooltipRect.width > window.innerWidth - 10) {
+            left = window.innerWidth - tooltipRect.width - 10;
+        }
+
+        tooltipEl.style.left = `${left}px`;
+        tooltipEl.style.top = `${top}px`;
+    }
+
+    function hideTooltip() {
+        if (tooltipEl) {
+            tooltipEl.remove();
+            tooltipEl = null;
+        }
+    }
+
     let refreshTimer = null;
+
     async function refreshData() {
-        const p = getPanel(); if (!p) return;
+        const p = getPanel();
+        if (!p) return;
         const body = p.querySelector('.pbody');
         if (body) body.innerHTML = `<div class="loading">${L.loading}</div>`;
         try {
@@ -238,14 +345,20 @@
     }
 
     function enableDrag(panel) {
-        const header = panel.querySelector('.pheader'); if (!header) return;
-        let ox=0, oy=0, sx=0, sy=0, on=false;
+        const header = panel.querySelector('.pheader');
+        if (!header) return;
+        let ox = 0, oy = 0, sx = 0, sy = 0, on = false;
         header.style.cursor = 'grab';
         header.addEventListener('mousedown', e => {
             if (e.target.tagName === 'BUTTON') return;
-            on = true; sx = e.clientX; sy = e.clientY;
-            const r = panel.getBoundingClientRect(); ox = r.left; oy = r.top;
-            header.style.cursor = 'grabbing'; e.preventDefault();
+            on = true;
+            sx = e.clientX;
+            sy = e.clientY;
+            const r = panel.getBoundingClientRect();
+            ox = r.left;
+            oy = r.top;
+            header.style.cursor = 'grabbing';
+            e.preventDefault();
         });
         document.addEventListener('mousemove', e => {
             if (!on) return;
@@ -253,7 +366,12 @@
             panel.style.left = `${Math.max(0, Math.min(ox + e.clientX - sx, window.innerWidth - panel.offsetWidth))}px`;
             panel.style.top = `${Math.max(0, Math.min(oy + e.clientY - sy, window.innerHeight - panel.offsetHeight))}px`;
         });
-        document.addEventListener('mouseup', () => { if (on) { on=false; header.style.cursor='grab'; } });
+        document.addEventListener('mouseup', () => {
+            if (on) {
+                on = false;
+                header.style.cursor = 'grab';
+            }
+        });
     }
 
     function createPanel() {
@@ -275,10 +393,19 @@
         document.body.appendChild(panel);
 
         panel.querySelector('#gqp-refresh').onclick = refreshData;
-        panel.querySelector('#gqp-theme').onclick = () => { cfg.theme = cfg.theme==='dark'?'light':'dark'; applyTheme(); };
-        panel.querySelector('#gqp-min').onclick = () => { cfg.minimized = !cfg.minimized; applyMinimized(); };
+        panel.querySelector('#gqp-theme').onclick = () => {
+            cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
+            applyTheme();
+        };
+        panel.querySelector('#gqp-min').onclick = () => {
+            cfg.minimized = !cfg.minimized;
+            applyMinimized();
+        };
 
-        applyTheme(); applyMinimized(); enableDrag(panel); refreshData();
+        applyTheme();
+        applyMinimized();
+        enableDrag(panel);
+        refreshData();
     }
 
     function init() {
@@ -315,6 +442,26 @@
         .gqp-tbtn.off{background:transparent;color:var(--hint);border:1px solid var(--border)}
         #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
+
+        .gqp-help {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            font-size: 11px;
+            font-weight: bold;
+            color: #888;
+            background: #333;
+            border-radius: 50%;
+            margin-left: 6px;
+            cursor: help;
+            user-select: none;
+            vertical-align: middle;
+        }
+
+        .c-ok { color: var(--ok); }
+        .c-danger { color: var(--danger); }
     `);
 
     if (document.readyState === 'loading') {
