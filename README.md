@@ -1,4 +1,4 @@
-# Grok Quota Monitor Pro
+# Grok Quota Display Pro
 
 A clean and feature-rich Tampermonkey userscript that displays real-time chat and image generation quotas on [grok.com](https://grok.com).
 
