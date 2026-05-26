@@ -132,7 +132,7 @@
         const tasks = [
             fetchChatQuota('fast').then(d => chat.fast = d),
             fetchChatQuota('expert').then(d => chat.expert = d),
-            fetchChatQuota('grok-420-computer-use-sa').then(d => chat.grok43beta = d)   
+            fetchChatQuota('grok-420-computer-use-sa').then(d => chat.grok43beta = d)
         ];
         if (sub.canUseHeavy) {
             tasks.push(fetchChatQuota('heavy').then(d => chat.heavy = d));
@@ -171,7 +171,7 @@
     function buildChatSection(chat, sub) {
         if (!cfg.showText) return '';
         let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.chatTitle}</div>`;
-        html += buildQuotaRow(L.fast, chat.fast) + buildQuotaRow(L.expert, chat.expert) + buildQuotaRow(L.grok43beta, chat.grok43beta);   
+        html += buildQuotaRow(L.fast, chat.fast) + buildQuotaRow(L.expert, chat.expert) + buildQuotaRow(L.grok43beta, chat.grok43beta);
         html += sub.canUseHeavy ? buildQuotaRow(L.heavy, chat.heavy) : buildQuotaRow(L.heavy, null, L.unlockHeavy);
         return html + '</div>';
     }
@@ -263,7 +263,7 @@
         const helpIcon = p.querySelector('.gqp-help');
         if (helpIcon) {
             helpIcon.addEventListener('mouseenter', showTooltip);
-            helpIcon。addEventListener('mouseleave', hideTooltip);
+            helpIcon.addEventListener('mouseleave', hideTooltip);
         }
         const ts = new Date(data.timestamp).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
         if (footer) footer.innerHTML = `<span>${L.lastUpdate}: ${ts}</span><span class="fver">v${VERSION}</span>`;
@@ -272,23 +272,7 @@
     function showTooltip(e) {
         hideTooltip();
         tooltipEl = document.createElement('div');
-        tooltipEl.style.cssText = `
-            position: fixed;
-            background: #f0f0f0;
-            color: #222;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-size: 12.5px;
-            font-weight: 400;
-            line-height: 1.55;
-            white-space: pre-wrap;
-            width: 320px;
-            max-width: 340px;
-            z-index: 9999999;
-            box-shadow: 0 6px 16px rgba(0,0,0,0.25);
-            border: 1px solid #ddd;
-            pointer-events: none;
-        `;
+        tooltipEl.style.cssText = 'position:fixed;background:#f0f0f0;color:#222;padding:10px 14px;border-radius:8px;font-size:12.5px;font-weight:400;line-height:1.55;white-space:pre-wrap;width:320px;max-width:340px;z-index:9999999;box-shadow:0 6px 16px rgba(0,0,0,0.25);border:1px solid #ddd;pointer-events:none;';
         tooltipEl.textContent = L.imagineHelpText;
         document.body.appendChild(tooltipEl);
         const rect = e.target.getBoundingClientRect();
@@ -296,11 +280,9 @@
         let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
         let top = rect.top - tooltipRect.height - 8;
         if (left < 10) left = 10;
-        if (left + tooltipRect.width > window.innerWidth - 10) {
-            left = window.innerWidth - tooltipRect.width - 10;
-        }
-        tooltipEl.style.left = `${left}px`;
-        tooltipEl.style.top = `${top}px`;
+        if (left + tooltipRect.width > window.innerWidth - 10) left = window.innerWidth - tooltipRect.width - 10;
+        tooltipEl.style.left = left + 'px';
+        tooltipEl.style.top = top + 'px';
     }
 
     function hideTooltip() {
@@ -354,8 +336,8 @@
         document.addEventListener('mousemove', e => {
             if (!on) return;
             panel.style.right = panel.style.bottom = 'unset';
-            panel.style.left = `${Math.max(0, Math.min(ox + e.clientX - sx, window.innerWidth - panel.offsetWidth))}px`;
-            panel.style.top = `${Math.max(0, Math.min(oy + e.clientY - sy, window.innerHeight - panel.offsetHeight))}px`;
+            panel.style.left = Math.max(0, Math.min(ox + e.clientX - sx, window.innerWidth - panel.offsetWidth)) + 'px';
+            panel.style.top = Math.max(0, Math.min(oy + e.clientY - sy, window.innerHeight - panel.offsetHeight)) + 'px';
         });
         document.addEventListener('mouseup', () => {
             if (on) {
@@ -383,7 +365,7 @@
             <div class="pfooter"></div>`;
         document.body.appendChild(panel);
 
-        panel。querySelector('#gqp-refresh').onclick = refreshData;
+        panel.querySelector('#gqp-refresh').onclick = refreshData;
         panel.querySelector('#gqp-theme').onclick = () => {
             cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
             applyTheme();
@@ -409,7 +391,7 @@
     }
 
     GM_addStyle(`
-        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:260px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);overflow:hidden;user-select:none}
+        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:260px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;user-select:none}
         #${PANEL_ID}.light{--bg:#fff;--bg2:#fafafa;--bg3:#f4f4f5;--border:#e4e4e7;--text:#18181b;--sub:#52525b;--hint:#a1a1aa;--ok:#16a34a;--warn:#ea580c;--danger:#dc2626}
         #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:9px 12px 8px;background:var(--bg2);border-bottom:1px solid var(--border)}
         #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.92}
@@ -433,26 +415,9 @@
         .gqp-tbtn.off{background:transparent;color:var(--hint);border:1px solid var(--border)}
         #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
-
-        .gqp-help {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 14px;
-            height: 14px;
-            font-size: 11px;
-            font-weight: bold;
-            color: #888;
-            background: #333;
-            border-radius: 50%;
-            margin-left: 6px;
-            cursor: help;
-            user-select: none;
-            vertical-align: middle;
-        }
-
-        .c-ok { color: var(--ok); }
-        .c-danger { color: var(--danger); }
+        .gqp-help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;font-size:11px;font-weight:bold;color:#888;background:#333;border-radius:50%;margin-left:6px;cursor:help;user-select:none;vertical-align:middle}
+        .c-ok{color:var(--ok)}
+        .c-danger{color:var(--danger)}
     `);
 
     if (document.readyState === 'loading') {
