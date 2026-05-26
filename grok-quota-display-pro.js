@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.1.1
-// @description Grok quota monitor (fixed tooltip clipping + proper case)
+// @version 2.1.2
+// @description Grok quota monitor (fixed tooltip clipping + proper case) + Grok 4.3 (beta) support
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
 // @match https://grok.com/*
@@ -19,7 +19,7 @@
 
     const PANEL_ID = 'grok-quota-pro';
     const REFRESH_MS = 60 * 1000;
-    const VERSION = '2.1.1';
+    const VERSION = '2.1.2';
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
     const L = {
@@ -28,6 +28,7 @@
         fast: LANG === 'zh' ? '快速 (Fast)' : 'Fast',
         expert: LANG === 'zh' ? '专家 (Expert)' : 'Expert',
         heavy: LANG === 'zh' ? '重度 (Heavy)' : 'Heavy',
+        grok43beta: LANG === 'zh' ? 'Grok 4.3 (beta) ' : 'Grok 4.3 (beta) ',
         lastUpdate: LANG === 'zh' ? '更新' : 'Updated',
         loading: LANG === 'zh' ? '加载中…' : 'Loading…',
         refreshFail: LANG === 'zh' ? '加载失败' : 'Load failed',
@@ -130,7 +131,8 @@
         const chat = {};
         const tasks = [
             fetchChatQuota('fast').then(d => chat.fast = d),
-            fetchChatQuota('expert').then(d => chat.expert = d)
+            fetchChatQuota('expert').then(d => chat.expert = d),
+            fetchChatQuota('grok-420-computer-use-sa').then(d => chat.grok43beta = d)   
         ];
         if (sub.canUseHeavy) {
             tasks.push(fetchChatQuota('heavy').then(d => chat.heavy = d));
@@ -169,7 +171,7 @@
     function buildChatSection(chat, sub) {
         if (!cfg.showText) return '';
         let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.chatTitle}</div>`;
-        html += buildQuotaRow(L.fast, chat.fast) + buildQuotaRow(L.expert, chat.expert);
+        html += buildQuotaRow(L.fast, chat.fast) + buildQuotaRow(L.expert, chat.expert) + buildQuotaRow(L.grok43beta, chat.grok43beta);   
         html += sub.canUseHeavy ? buildQuotaRow(L.heavy, chat.heavy) : buildQuotaRow(L.heavy, null, L.unlockHeavy);
         return html + '</div>';
     }
@@ -187,7 +189,6 @@
             for (const [key, val] of entries) {
                 let displayValue = '—';
                 let cls = '';
-
                 if (val && typeof val === 'object') {
                     if (val.available === true) {
                         displayValue = L.available;
@@ -197,7 +198,6 @@
                         cls = 'c-danger';
                     }
                 }
-
                 const displayKey = imagineKeyMap[key] || key;
                 html += `<div class="gqp-row"><span class="gqp-name">${displayKey}</span><span class="gqp-num"><span class="${cls}" style="font-size:12.5px;font-weight:500;">${displayValue}</span></span></div>`;
             }
@@ -247,14 +247,11 @@
         if (!p) return;
         const body = p.querySelector('.pbody');
         if (body) body.innerHTML = buildChatSection(data.chat, data.sub) + buildImagineSection(data.imagine);
-
         const old = p.querySelector('.gqp-toggles');
         if (old) old.remove();
-
         const footer = p.querySelector('.pfooter');
         const tog = Object.assign(document.createElement('div'), { innerHTML: buildToggles() }).firstElementChild;
         if (footer) p.insertBefore(tog, footer);
-
         p.querySelectorAll('.gqp-tbtn').forEach(btn => {
             btn.addEventListener('click', () => {
                 if (btn.dataset.tid === 'text') cfg.showText = !cfg.showText;
@@ -263,20 +260,17 @@
                 applyMinimized();
             });
         });
-
         const helpIcon = p.querySelector('.gqp-help');
         if (helpIcon) {
             helpIcon.addEventListener('mouseenter', showTooltip);
-            helpIcon.addEventListener('mouseleave', hideTooltip);
+            helpIcon。addEventListener('mouseleave', hideTooltip);
         }
-
         const ts = new Date(data.timestamp).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
         if (footer) footer.innerHTML = `<span>${L.lastUpdate}: ${ts}</span><span class="fver">v${VERSION}</span>`;
     }
 
     function showTooltip(e) {
         hideTooltip();
-
         tooltipEl = document.createElement('div');
         tooltipEl.style.cssText = `
             position: fixed;
@@ -296,20 +290,15 @@
             pointer-events: none;
         `;
         tooltipEl.textContent = L.imagineHelpText;
-
         document.body.appendChild(tooltipEl);
-
         const rect = e.target.getBoundingClientRect();
         const tooltipRect = tooltipEl.getBoundingClientRect();
-
         let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
         let top = rect.top - tooltipRect.height - 8;
-
         if (left < 10) left = 10;
         if (left + tooltipRect.width > window.innerWidth - 10) {
             left = window.innerWidth - tooltipRect.width - 10;
         }
-
         tooltipEl.style.left = `${left}px`;
         tooltipEl.style.top = `${top}px`;
     }
@@ -394,7 +383,7 @@
             <div class="pfooter"></div>`;
         document.body.appendChild(panel);
 
-        panel.querySelector('#gqp-refresh').onclick = refreshData;
+        panel。querySelector('#gqp-refresh').onclick = refreshData;
         panel.querySelector('#gqp-theme').onclick = () => {
             cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
             applyTheme();
