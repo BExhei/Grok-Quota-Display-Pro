@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.2.1
-// @description Grok quota monitor (fixed tooltip clipping + proper case) + updated for Fast/Expert/Heavy + SuperGrok points (API+progress bar) + membership tier for Heavy + imagine numeric support
+// @version 2.3.0
+// @description Grok quota monitor — text chat quotas + usage total limit; grok-3/grok-4/grok-4-heavy API
+// @run-at       document-start
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
 // @match https://grok.com/*
 // @grant GM_addStyle
-// @grant GM_setValue
-// @grant GM_getValue
 // @license GPL-3.0
 // @downloadURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
 // @updateURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
@@ -18,8 +17,20 @@
     'use strict';
 
     // Cache for subscription points/usage captured from the page's own API calls.
-    // This allows the progress bar to appear without the user ever opening the settings/Usage tab.
     let cachedPointsUsage = null;
+    const cachedChatQuotas = {};
+
+    function cacheChatQuotaFromIntercept(urlStr, reqBody, payload) {
+        if (!payload || typeof payload !== 'object' || !/\/rest\/rate-limits/.test(urlStr)) return;
+        let body = {};
+        try { body = reqBody ? JSON.parse(reqBody) : {}; } catch { body = {}; }
+        const modelName = body.modelName || '';
+        const parsed = normalizeRateLimitResponse(payload);
+        if (parsed.error || parsed.disabled) return;
+        for (const [kind, model] of Object.entries(CHAT_MODELS)) {
+            if (modelName === model || modelName === kind) cachedChatQuotas[kind] = parsed;
+        }
+    }
 
     // Monkey-patch fetch *early* so we snoop on any /rest/* responses the official Grok app makes
     // (initial load, header, user menu, settings, etc.). When it contains the points info we cache it.
@@ -35,6 +46,7 @@
                     if (ct.includes('json')) {
                         const j = await clone.json().catch(() => null);
                         if (j) {
+                            cacheChatQuotaFromIntercept(urlStr, init && init.body, j);
                             // direct percent fields
                             let p = null;
                             const walkFindPct = (o, d) => {
@@ -92,59 +104,44 @@
 
     const PANEL_ID = 'grok-quota-pro';
     const REFRESH_MS = 60 * 1000;
-    const VERSION = '2.2.1';
+    const VERSION = '2.3.0';
+
+    const CHAT_MODELS = {
+        fast: 'grok-3',
+        expert: 'grok-4',
+        heavy: 'grok-4-heavy',
+    };
+
+    const CHAT_MODEL_FALLBACKS = {
+        fast: ['fast'],
+        expert: ['expert'],
+        heavy: ['heavy'],
+    };
+
+    const DEFAULT_REQUEST_KIND = 'DEFAULT';
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
     const L = {
         chatTitle: LANG === 'zh' ? '聊天配额 / Chat Quotas' : 'Chat Quotas',
-        imagineTitle: LANG === 'zh' ? '图像生成配额 / Imagine Quotas' : 'Imagine Quotas',
         fast: LANG === 'zh' ? '快速 (Fast)' : 'Fast',
         expert: LANG === 'zh' ? '专家 (Expert)' : 'Expert',
         heavy: LANG === 'zh' ? '重度 (Heavy)' : 'Heavy',
-        pointsTitle: LANG === 'zh' ? '订阅积分使用 / Points' : 'Subscription Points',
+        usageTitle: LANG === 'zh' ? '使用量总限额 / Usage Limit' : 'Usage Total Limit',
+        usageEmpty: LANG === 'zh' ? '暂无用量数据，可打开设置 → 用量 刷新' : 'No usage data — open Settings → Usage',
         lastUpdate: LANG === 'zh' ? '更新' : 'Updated',
         loading: LANG === 'zh' ? '加载中…' : 'Loading…',
         refreshFail: LANG === 'zh' ? '加载失败' : 'Load failed',
         guest: LANG === 'zh' ? '游客' : 'Guest',
         loggedIn: LANG === 'zh' ? '已登录' : 'Logged in',
-        textCategory: LANG === 'zh' ? '文字类' : 'Text',
-        imageCategory: LANG === 'zh' ? '图片类' : 'Image',
         unlockHeavy: LANG === 'zh' ? '仅限 Heavy 订阅账户' : 'Heavy subscribers only',
-        available: LANG === 'zh' ? '可用' : 'Available',
-        unavailable: LANG === 'zh' ? '不可用' : 'Unavailable',
-        imagineHelpText: LANG === 'zh'
-            ? '图像配额：若后端返回具体数字则显示剩余/总额，否则显示可用状态。Grok 曾限制查询，当前以返回为准。'
-            : 'Imagine quotas: shows remaining/total if the backend provides numbers, otherwise availability status. Grok previously restricted the interface; display follows the current response.'
     };
 
-    const imagineKeyMap = LANG === 'zh'
-        ? {
-            image: '图像 (Image)',
-            imagePro: '图像 Pro (Image Pro)',
-            imageEdit: '图像编辑 (Image Edit)',
-            video: '视频 (Video)',
-            video720p: '视频 720p (Video 720p)'
-          }
-        : {
-            image: 'Image',
-            imagePro: 'Image Pro',
-            imageEdit: 'Image Edit',
-            video: 'Video',
-            video720p: 'Video 720p'
-          };
-
     const cfg = {
-        get showText() { return GM_getValue('grok_show_text', true); },
-        set showText(v) { GM_setValue('grok_show_text', v); },
-        get showImagine() { return GM_getValue('grok_show_imagine', true); },
-        set showImagine(v) { GM_setValue('grok_show_imagine', v); },
         get theme() { return localStorage.getItem('grokQuotaTheme') || 'dark'; },
         set theme(v) { localStorage.setItem('grokQuotaTheme', v); },
         get minimized() { return localStorage.getItem('grokQuotaMin') === '1'; },
         set minimized(v) { localStorage.setItem('grokQuotaMin', v ? '1' : '0'); },
     };
-
-    let tooltipEl = null;
 
     function detectSubscription() {
         try {
@@ -334,13 +331,15 @@
         return null;
     }
 
-    function buildSubscriptionSection(usage) {
-        if (!usage || typeof usage.percent !== 'number') return '';
+    function buildUsageSection(usage) {
+        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.usageTitle}</div>`;
+        if (!usage || typeof usage.percent !== 'number') {
+            return html + `<div class="gqp-hint" style="padding:4px 2px">${L.usageEmpty}</div></div>`;
+        }
         const pct = usage.percent;
         const cls = pct >= 90 ? 'c-danger' : pct >= 70 ? 'c-warn' : 'c-ok';
         const usedLabel = LANG === 'zh' ? '已用' : 'used';
         const resetLabel = LANG === 'zh' ? '重置' : 'Resets';
-        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.pointsTitle}</div>`;
         html += `<div class="gqp-row gqp-usage-row" style="flex-direction:column;align-items:stretch;padding:6px 10px;">`;
         html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">`;
         html += `<span class="gqp-name">${LANG === 'zh' ? '免费积分' : 'Free points'}</span>`;
@@ -350,39 +349,104 @@
         if (usage.resetDate) {
             html += `<div class="gqp-usage-text" style="margin-top:3px;font-size:10.5px;color:var(--hint);">${resetLabel}: ${usage.resetDate}</div>`;
         }
-        if (usage.source === 'api') {
-            html += `<div class="gqp-usage-text" style="font-size:9px;opacity:.6;">(live)</div>`;
-        }
         html += `</div></div>`;
         return html;
     }
 
-    async function fetchChatQuota(kind) {
+    function apiHeaders() {
+        return {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-Xai-Request-Id': Math.random().toString(16).slice(2),
+        };
+    }
+
+    function getRateLimitTotal(info) {
+        if (!info || typeof info !== 'object') return null;
+        const direct = info.totalQueries ?? info.totalTokens ?? info.maxQueries
+            ?? info.limit ?? info.queryLimit ?? info.quotaLimit ?? info.maxRequests ?? info.total;
+        if (typeof direct === 'number') return direct;
+        const rem = info.remainingQueries ?? info.remainingTokens ?? info.remaining;
+        const used = info.usedQueries ?? info.usedTokens ?? info.used;
+        if (typeof rem === 'number' && typeof used === 'number') return rem + used;
+        return null;
+    }
+
+    function getRateLimitRemaining(info) {
+        if (!info || typeof info !== 'object') return null;
+        const rem = info.remainingQueries ?? info.remainingTokens ?? info.remaining;
+        return typeof rem === 'number' ? rem : null;
+    }
+
+    function normalizeRateLimitResponse(data) {
+        if (!data || typeof data !== 'object') return { error: true };
+        if (data.error) return data;
+
+        const disabledMsg = data.message || data.errorMessage || data.detail || data.error?.message;
+        if (typeof disabledMsg === 'string' && /temporarily disabled|暂时禁用|暂时关闭/i.test(disabledMsg)) {
+            return { disabled: true, message: disabledMsg };
+        }
+
+        const pick = (info) => {
+            const rem = getRateLimitRemaining(info);
+            if (rem == null) return null;
+            return {
+                remainingQueries: rem,
+                totalQueries: getRateLimitTotal(info),
+                waitTimeSeconds: info.waitTimeSeconds ?? info.resetAfterSeconds ?? info.retryAfterSeconds ?? 0,
+            };
+        };
+
+        const high = pick(data.highEffortRateLimits);
+        const low = pick(data.lowEffortRateLimits);
+        if (high && low) {
+            return {
+                remainingQueries: high.remainingQueries,
+                totalQueries: high.totalQueries,
+                lowRemaining: low.remainingQueries,
+                lowTotal: low.totalQueries,
+            };
+        }
+        if (high) return high;
+        if (low) return low;
+
+        const direct = pick(data);
+        if (direct) return direct;
+
+        return { error: true };
+    }
+
+    async function fetchRateLimitRaw(modelName, requestKind = DEFAULT_REQUEST_KIND) {
+        const res = await fetch('https://grok.com/rest/rate-limits', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: JSON.stringify({ modelName, requestKind }),
+            credentials: 'include',
+        });
+        if (!res.ok) return null;
         try {
-            const res = await fetch('https://grok.com/rest/rate-limits', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ modelName: kind }),
-                credentials: 'include'
-            });
-            return res.ok ? await res.json() : { error: true };
+            return await res.json();
         } catch {
-            return { error: true };
+            return null;
         }
     }
 
-    async function fetchImagineQuota() {
-        try {
-            const res = await fetch('https://grok.com/rest/media/imagine/quota_info', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: '{}',
-                credentials: 'include'
-            });
-            return res.ok ? await res.json() : { error: true };
-        } catch {
-            return { error: true };
+    async function fetchChatQuota(kind) {
+        if (cachedChatQuotas[kind]) return cachedChatQuotas[kind];
+        const models = [CHAT_MODELS[kind], ...(CHAT_MODEL_FALLBACKS[kind] || [])].filter(Boolean);
+        for (const modelName of models) {
+            try {
+                const raw = await fetchRateLimitRaw(modelName, DEFAULT_REQUEST_KIND);
+                const parsed = normalizeRateLimitResponse(raw);
+                if (!parsed.error && !parsed.disabled) {
+                    cachedChatQuotas[kind] = parsed;
+                    return parsed;
+                }
+            } catch {
+                // try next model id
+            }
         }
+        return { error: true };
     }
 
     async function fetchAllQuotas(sub) {
@@ -395,8 +459,7 @@
             tasks.push(fetchChatQuota('heavy').then(d => chat.heavy = d));
         }
         await Promise.all(tasks);
-        const imagine = await fetchImagineQuota();
-        return { chat, imagine, timestamp: Date.now(), sub };
+        return { chat, timestamp: Date.now(), sub };
     }
 
     function valClass(rem, total) {
@@ -422,66 +485,21 @@
         const total = info.totalQueries ?? info.total ?? null;
         const cls = valClass(rem, total);
         const tot = total != null ? `<span class="gqp-total">/ ${total}</span>` : '';
-        return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-num"><span class="gqp-val ${cls}">${rem}</span>${tot}</span></div>`;
+        let extra = '';
+        if (typeof info.lowRemaining === 'number') {
+            const lowTot = info.lowTotal != null ? ` / ${info.lowTotal}` : '';
+            extra = `<div class="gqp-usage-text" style="margin-top:2px;font-size:10px;color:var(--hint);">${LANG === 'zh' ? '低消耗' : 'Low'}: ${info.lowRemaining}${lowTot}</div>`;
+        }
+        return `<div class="gqp-row" style="flex-direction:column;align-items:stretch;"><div style="display:flex;justify-content:space-between;align-items:center;"><span class="gqp-name">${label}</span><span class="gqp-num"><span class="gqp-val ${cls}">${rem}</span>${tot}</span></div>${extra}</div>`;
     }
 
     function buildChatSection(chat, sub) {
-        if (!cfg.showText) return '';
         chat = chat || {};
         const s = sub || { canUseHeavy: false };
         let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.chatTitle}</div>`;
         html += buildQuotaRow(L.fast, chat.fast) + buildQuotaRow(L.expert, chat.expert);
         html += s.canUseHeavy ? buildQuotaRow(L.heavy, chat.heavy) : buildQuotaRow(L.heavy, null, L.unlockHeavy);
         return html + '</div>';
-    }
-
-    function buildImagineSection(imagine) {
-        if (!cfg.showImagine) return '';
-        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.imagineTitle} <span class="gqp-help">?</span></div>`;
-        if (!imagine || imagine.error) {
-            return html + `<div class="gqp-hint" style="padding:4px 2px">${L.refreshFail}</div></div>`;
-        }
-        const entries = Object.entries(imagine).filter(([, v]) => v != null);
-        if (!entries.length) {
-            html += `<div class="gqp-hint" style="padding:4px 2px">—</div>`;
-        } else {
-            for (const [key, val] of entries) {
-                const displayKey = imagineKeyMap[key] || key;
-                if (val && typeof val === 'object') {
-                    // 如果后端现在返回实际数字（remaining / total），优先像聊天配额一样显示
-                    const rem = val.remainingQueries ?? val.remaining ?? val.count ?? val.used ?? null;
-                    const total = val.totalQueries ?? val.total ?? val.limit ?? null;
-                    if (typeof rem === 'number' || typeof total === 'number') {
-                        const cls = valClass(rem, total);
-                        const totStr = total != null ? `<span class="gqp-total">/ ${total}</span>` : '';
-                        html += `<div class="gqp-row"><span class="gqp-name">${displayKey}</span><span class="gqp-num"><span class="gqp-val ${cls}">${rem ?? '—'}</span>${totStr}</span></div>`;
-                        continue;
-                    }
-                    // 否则回退到可用性
-                    let displayValue = '—';
-                    let cls = '';
-                    if (val.available === true) {
-                        displayValue = L.available;
-                        cls = 'c-ok';
-                    } else if (val.available === false) {
-                        displayValue = L.unavailable;
-                        cls = 'c-danger';
-                    } else if (typeof val.available === 'string') {
-                        displayValue = val.available;
-                    }
-                    html += `<div class="gqp-row"><span class="gqp-name">${displayKey}</span><span class="gqp-num"><span class="${cls}" style="font-size:12.5px;font-weight:500;">${displayValue}</span></span></div>`;
-                } else {
-                    html += `<div class="gqp-row"><span class="gqp-name">${displayKey}</span><span class="gqp-num"><span style="font-size:12.5px;">${val}</span></span></div>`;
-                }
-            }
-        }
-        return html + '</div>';
-    }
-
-    function buildToggles() {
-        const t = cfg.showText ? 'on' : 'off';
-        const i = cfg.showImagine ? 'on' : 'off';
-        return `<div class="gqp-toggles"><button class="gqp-tbtn ${t}" data-tid="text">${L.textCategory}</button><button class="gqp-tbtn ${i}" data-tid="img">${L.imageCategory}</button></div>`;
     }
 
     function getPanel() {
@@ -501,8 +519,6 @@
         if (!p) return;
         const body = p.querySelector('.pbody');
         if (body) body.style.display = cfg.minimized ? 'none' : '';
-        const tog = p.querySelector('.gqp-toggles');
-        if (tog) tog.style.display = cfg.minimized ? 'none' : '';
         const btn = p.querySelector('#gqp-min');
         if (btn) btn.textContent = cfg.minimized ? '+' : '−';
     }
@@ -520,50 +536,10 @@
         if (!p) return;
         const body = p.querySelector('.pbody');
         const usage = (data && data.usage) ? data.usage : getPointsUsage();
-        if (body) body.innerHTML = buildSubscriptionSection(usage) + buildChatSection(data ? data.chat : null, data ? data.sub : null) + buildImagineSection(data ? data.imagine : null);
-        const old = p.querySelector('.gqp-toggles');
-        if (old) old.remove();
+        if (body) body.innerHTML = buildUsageSection(usage) + buildChatSection(data ? data.chat : null, data ? data.sub : null);
         const footer = p.querySelector('.pfooter');
-        const tog = Object.assign(document.createElement('div'), { innerHTML: buildToggles() }).firstElementChild;
-        if (footer) p.insertBefore(tog, footer);
-        p.querySelectorAll('.gqp-tbtn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                if (btn.dataset.tid === 'text') cfg.showText = !cfg.showText;
-                else cfg.showImagine = !cfg.showImagine;
-                updateContent(data);
-                applyMinimized();
-            });
-        });
-        const helpIcon = p.querySelector('.gqp-help');
-        if (helpIcon) {
-            helpIcon.addEventListener('mouseenter', showTooltip);
-            helpIcon.addEventListener('mouseleave', hideTooltip);
-        }
         const ts = (data && data.timestamp) ? new Date(data.timestamp).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' }) : '--';
         if (footer) footer.innerHTML = `<span>${L.lastUpdate}: ${ts}</span><span class="fver">v${VERSION}</span>`;
-    }
-
-    function showTooltip(e) {
-        hideTooltip();
-        tooltipEl = document.createElement('div');
-        tooltipEl.style.cssText = 'position:fixed;background:#f0f0f0;color:#222;padding:10px 14px;border-radius:8px;font-size:12.5px;font-weight:400;line-height:1.55;white-space:pre-wrap;width:320px;max-width:340px;z-index:9999999;box-shadow:0 6px 16px rgba(0,0,0,0.25);border:1px solid #ddd;pointer-events:none;';
-        tooltipEl.textContent = L.imagineHelpText;
-        document.body.appendChild(tooltipEl);
-        const rect = e.target.getBoundingClientRect();
-        const tooltipRect = tooltipEl.getBoundingClientRect();
-        let left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-        let top = rect.top - tooltipRect.height - 8;
-        if (left < 10) left = 10;
-        if (left + tooltipRect.width > window.innerWidth - 10) left = window.innerWidth - tooltipRect.width - 10;
-        tooltipEl.style.left = left + 'px';
-        tooltipEl.style.top = top + 'px';
-    }
-
-    function hideTooltip() {
-        if (tooltipEl) {
-            tooltipEl.remove();
-            tooltipEl = null;
-        }
     }
 
     let refreshTimer = null;
@@ -721,13 +697,8 @@
         .gqp-val.c-ok{color:var(--ok)}.gqp-val.c-warn{color:var(--warn)}.gqp-val.c-danger{color:var(--danger)}
         .gqp-total{font-size:10.5px;color:var(--hint);font-family:ui-monospace,Menlo,monospace}
         .gqp-hint{font-size:10.5px;color:var(--hint);font-style:italic}
-        .gqp-toggles{display:flex;gap:6px;margin-top:8px;padding:8px 12px;background:var(--bg2);border-top:1px solid var(--border)}
-        .gqp-tbtn{flex:1;background:var(--bg3);color:var(--sub);border:none;padding:6px 10px;border-radius:7px;font-size:11.5px;font-weight:500;cursor:pointer}
-        .gqp-tbtn.on{background:#3f3f46;color:#e4e4e7}
-        .gqp-tbtn.off{background:transparent;color:var(--hint);border:1px solid var(--border)}
         #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
-        .gqp-help{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;font-size:11px;font-weight:bold;color:#888;background:#333;border-radius:50%;margin-left:6px;cursor:help;user-select:none;vertical-align:middle}
         .c-ok{color:var(--ok)}
         .c-danger{color:var(--danger)}
         #${PANEL_ID} .gqp-progress{height:5px;background:var(--bg3);border-radius:999px;overflow:hidden;margin:2px 0 1px}
