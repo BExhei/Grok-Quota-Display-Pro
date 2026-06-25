@@ -1,73 +1,69 @@
 # Grok Quota Display Pro
 
-A powerful, clean Tampermonkey / Violentmonkey userscript that shows **real-time Grok quotas** in a beautiful, interactive floating panel on [grok.com](https://grok.com).
+A clean Tampermonkey / Violentmonkey userscript that shows **real-time Grok quotas** in an interactive floating panel on [grok.com](https://grok.com).
 
-[![Version](https://img.shields.io/badge/version-2.2.1-blue)](https://github.com/BExhei/Grok-Quota-Display-Pro)
-[![Language](https://img.shields.io/badge/language-Bilingual-brightgreen)](https://github.com/BExhei/Grok-Quota-Display-Pro)
+[![Version](https://img.shields.io/badge/version-2.3.0-blue)](.)
+[![Language](https://img.shields.io/badge/language-Bilingual-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-**GitHub**: https://github.com/BExhei/Grok-Quota-Display-Pro  
-**Install (Greasyfork)**: https://greasyfork.org/scripts/578827-grok-quota-display-pro
+**Upstream**: https://github.com/BExhei/Grok-Quota-Display-Pro  
+**Greasy Fork**: https://greasyfork.org/scripts/578827-grok-quota-display-pro
 
 ---
 
-## What's New (v2.2.1)
+## What's New (v2.3.0)
 
-- **Subscription Points / 订阅积分使用** (the main new feature)
-  - Displays the "Free points included with SuperGrok" (随 SuperGrok 附赠的免费积分) usage as a **visual progress bar**.
-  - Shows percentage used (e.g. 6% 已用), color-coded (green → orange → red as usage increases), and the reset date.
-  - **Smart live capture**: Uses early `fetch` interception + probing of `/rest/subscriptions`, `/rest/user`, etc. + safe DOM scanning. In many cases the points bar appears **without you ever opening the Settings → Usage tab**.
-  - When you do open the Usage tab, a lightweight observer triggers a quick one-time update.
+- **Updated chat quota API**
+  - Uses current model IDs: `grok-3` (Fast), `grok-4` (Expert), `grok-4-heavy` (Heavy)
+  - Sends `requestKind: "DEFAULT"` and parses nested rate-limit responses
+  - Intercepts the site's own `/rest/rate-limits` calls for faster, cached updates
 
-- **Accurate membership-aware Heavy quota row**
-  - For regular SuperGrok (and lower tiers) the Heavy line correctly shows **"仅限 Heavy 订阅账户"** / **"Heavy subscribers only"** instead of attempting to fetch or showing misleading numbers.
-  - Only SuperGrok Heavy accounts see live Heavy quota numbers.
+- **Usage total limit** (renamed from Subscription Points)
+  - Progress bar for SuperGrok free points (随 SuperGrok 附赠的免费积分)
+  - Percentage used, color-coded bar, and reset date
+  - Fetched via API probing + early `fetch` interception + DOM scan
+  - Opening **Settings → Usage** once per session still guarantees fresh data
 
-- **Stable refresh schedule**
-  - Back to clean **60-second auto-refresh** (only while the tab is visible) + visibility resume + manual refresh button.
-  - No more unwanted repeated refreshes.
+- **Simpler panel**
+  - Bottom section toggles removed — both sections always visible
+  - Header controls only: refresh, theme, minimize
 
-- **Improved Imagine quotas**
-  - If the backend returns numeric `remaining` / `total` values, they are displayed with the same color coding and `/ total` format as chat quotas.
-  - Falls back gracefully to availability status (Available / Unavailable) + nice Chinese/English labels (图像, Video 720p, etc.).
-  - Updated help tooltip.
+- **Imagine quotas removed**
+  - xAI disabled `POST /rest/media/imagine/quota_info` (“Imagine quota info is temporarily disabled”)
+  - Image / Video quota monitoring is **deprecated and no longer included**
 
-- Many robustness fixes, better caching of points data, bilingual improvements, and code cleanup.
+- Membership-aware Heavy row, 60s visible-tab auto-refresh, bilingual UI, and local-only operation unchanged.
 
 ---
 
 ## Features
 
 ### Real-time Quota Monitoring
-- **Chat quotas**: Fast, Expert, Heavy (with proper tier gating for Heavy)
-- **Subscription Points**: Beautiful progress bar + reset information for SuperGrok bundled free points
-- **Imagine quotas**: Image, Image Pro, Image Edit, Video, Video 720p (numeric when available)
+- **Chat quotas**: Fast, Expert, Heavy (remaining / total, with tier gating for Heavy)
+- **Usage total limit**: Progress bar + reset info for SuperGrok bundled free points
 
 ### Smart Subscription Detection
-- Automatically detects: Guest, Logged in, Premium+, **SuperGrok**, **SuperGrok Heavy**
+- Detects: Guest, Logged in, Premium+, **SuperGrok**, **SuperGrok Heavy**
 - Color-coded badge at the top of the panel
-- Heavy row respects your actual subscription (shows unlock message for non-Heavy users)
+- Non-Heavy users see **"Heavy subscribers only"** instead of misleading Heavy numbers
 
 ### Interactive Floating Panel
-- Positioned bottom-right by default, fully **draggable**
+- Bottom-right by default, fully **draggable**
 - Header controls:
   - ⟳ Manual refresh
-  - ☀️ / 🌙 Theme toggle (dark / light, persisted)
+  - ☀️ / 🌙 Theme toggle (dark / light, persisted in `localStorage`)
   - − / + Minimize / expand
-- Bottom toggles: **Text** (chat + points) / **Image** (Imagine) – independently show/hide sections
-- Persistent settings via `GM_setValue` + `localStorage`
 
 ### Visual & Bilingual
-- Color-coded values (green = ok, orange = warn, red = danger)
-- Shows `remaining / total` format where available
-- Full **Chinese / English** interface (auto-detected from `navigator.language`)
-- Clean, modern UI that matches Grok's aesthetic and adapts to light/dark
+- Color-coded values (green → orange → red)
+- `remaining / total` where the API provides totals
+- **Chinese / English** UI (auto-detected from `navigator.language`)
 
 ### Smart Refresh & Performance
-- Auto-refresh every **60 seconds** when the page is visible
-- Refreshes on tab visibility change
-- Points data is captured "for free" via network interception whenever the official site talks to its backend
-- Safe MutationObserver only reacts to the real settings Usage content (exact phrase match + ignores the panel itself)
+- Auto-refresh every **60 seconds** while the tab is visible
+- Refreshes when the tab becomes visible again
+- Usage data captured via network interception when Grok loads it
+- MutationObserver updates once when real Usage-tab content appears
 
 ---
 
@@ -78,53 +74,45 @@ A powerful, clean Tampermonkey / Violentmonkey userscript that shows **real-time
    - or [Violentmonkey](https://violentmonkey.github.io/)
 
 2. Install the script:
-   - **Recommended**: [Install from Greasyfork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro)
-   - Or copy the content of `grok-quota-display-pro.js` into a new userscript manually.
+   - Copy `Grok Quota Display Pro.js` into a new userscript, or
+   - Install from [Greasy Fork](https://greasyfork.org/scripts/578827-grok-quota-display-pro) (upstream; this local fork is v2.3.0)
 
-After installation, simply visit https://grok.com (logged in). The panel appears automatically.
+Visit https://grok.com while logged in — the panel appears automatically.
 
 ---
 
 ## Usage
 
-1. Go to [grok.com](https://grok.com).
-2. Look for the floating panel in the bottom-right.
-3. The colored badge at the top shows your detected tier (e.g. "SuperGrok").
-4. **Subscription Points** section (with progress bar) appears when data is available.
-5. Chat quotas (Fast / Expert / Heavy) – Heavy shows a lock message if your account doesn't have access.
-6. Imagine section with per-type status.
-7. Use header buttons to refresh, change theme, or minimize.
-8. Click the **Text** / **Image** buttons at the bottom to toggle sections.
-9. Drag the header to move the panel anywhere.
+1. Open [grok.com](https://grok.com).
+2. Find the floating panel in the bottom-right.
+3. Badge shows your tier (e.g. **SuperGrok**).
+4. **Usage total limit** — progress bar when data is available.
+5. **Chat quotas** — Fast / Expert / Heavy; Heavy locked for non-Heavy accounts.
+6. Use header buttons to refresh, switch theme, or minimize.
+7. Drag the header to reposition the panel.
 
-**Tip for points data**: The script works hard to show the progress bar without extra steps. Opening **Settings → Usage** once (in a session) guarantees fresh data and will instantly update the panel.
+**Tip**: If usage total limit is empty, open **Settings → Usage** once — the panel updates immediately and caches data for the session.
 
 ---
 
 ## Technical Notes
 
-- Uses official Grok REST endpoints:
-  - `POST /rest/rate-limits` with `modelName: "fast" | "expert" | "heavy"`
-  - `POST /rest/media/imagine/quota_info`
-  - Probing of `/rest/subscriptions`, `/rest/user`, etc. for points
-- **Fetch interception** (early monkey-patch) to transparently capture subscription usage data the moment the official UI requests it.
-- Tier detection via page text + header (very reliable).
-- All UI is injected client-side with `GM_addStyle`.
-- No external servers or tracking — 100% private and local.
-- Graceful degradation when endpoints change.
+- Grok REST endpoints:
+  - `POST /rest/rate-limits` with `modelName: "grok-3" | "grok-4" | "grok-4-heavy"` and `requestKind: "DEFAULT"`
+  - Probing `/rest/subscriptions`, `/rest/user`, `/rest/usage`, etc. for usage total limit
+- **Deprecated**: `POST /rest/media/imagine/quota_info` — not used; endpoint disabled by xAI
+- Early **fetch interception** (`@run-at document-start`) for usage and rate-limit data
+- Tier detection via page/header text
+- UI injected client-side with `GM_addStyle` — no external servers or tracking
 
 ---
 
-## Development / Updating
+## Development
 
-The single source file is `grok-quota-display-pro.js`.
-
-The Greasyfork version is the canonical distribution. You can also load the raw GitHub file directly in your userscript manager for testing the latest local changes.
+Single source file: `Grok Quota Display Pro.js`
 
 ---
 
 ## License
 
-GPL-3.0
-
----
+GPL-3.0 — based on [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota-Display-Pro)
