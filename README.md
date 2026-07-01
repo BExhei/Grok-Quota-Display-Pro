@@ -15,8 +15,7 @@ A clean Tampermonkey / Violentmonkey userscript that shows **real-time Grok quot
 
 - **Auto model detection & Auto row**
   - Reads the model selector button in real time — no more hardcoded model names
-  - Supports all model variants: `grok-4-auto`, `grok-420`, `grok-4.1`, `grok-4.1 Thinking`, `grok-4 Fast`, `grok-2`, `grok-2 Mini`, etc.
-  - New **Auto** row shows the `grok-4-auto` low-effort 50-query limit as the primary number, with high-effort quota as secondary
+  - New **Auto** row always visible, shows low-effort quota as primary with high-effort as secondary
   - Current model row highlighted with blue border + pulsing dot
 
 - **requestKind awareness for grok-3**
@@ -48,7 +47,7 @@ A clean Tampermonkey / Violentmonkey userscript that shows **real-time Grok quot
 
 ### Smart Model Detection
 - Reads the Grok model selector button directly (SVG path + text matching)
-- Maps 15+ UI model labels to correct internal model names
+- Maps UI labels to correct internal model names (`grok-4.3`, `grok-3`, `grok-4-heavy`, etc.)
 - Automatically detects grok-3 Think / DeepSearch modes for precise requestKind
 
 ### Smart Subscription Detection
