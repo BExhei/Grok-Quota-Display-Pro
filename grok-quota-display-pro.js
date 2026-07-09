@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.4.0
-// @description Grok quota monitor — text chat quotas + usage total limit; auto-detects model & requestKind for grok-3 Think/DeepSearch
+// @version 2.5.0
+// @description Grok quota monitor — weekly usage + current model indicator; silent refresh, no flash
 // @run-at       document-start
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
@@ -127,36 +127,58 @@
 
     // ─── Constants ───
     const PANEL_ID = 'grok-quota-pro';
-    const REFRESH_MS = 30 * 1000;   // 30s polling (matches lqzone's approach)
+    const WEEKLY_REFRESH_MS = 5 * 60 * 1000; // 5 min for weekly credits API
+    const MODEL_POLL_MS = 1500;              // light local model-chip sync (no network)
     const FETCH_TIMEOUT_MS = 8000;
-    const VERSION = '2.4.0';
-
-    const CHAT_MODELS = {
-        auto: 'grok-4-auto',
-        fast: 'grok-3',
-        expert: 'grok-4',
-        heavy: 'grok-4-heavy',
-    };
+    const VERSION = '2.5.0';
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
+    // Weekly product breakdown (same mapping as Grok Rate Limit Display)
+    const PRODUCT_NAMES = {
+        0: LANG === 'zh' ? '第三方' : '3rd Party',
+        1: 'API',
+        2: 'Grok Build',
+        3: LANG === 'zh' ? '插件' : 'Grok Plugins',
+        4: LANG === 'zh' ? '聊天' : 'Chat',
+        5: 'Imagine',
+        6: LANG === 'zh' ? '语音' : 'Voice',
+    };
+    const PRODUCT_COLORS = {
+        0: '#6b7280', 1: '#3b82f6', 2: '#10b981', 3: '#f59e0b',
+        4: '#06b6d4', 5: '#a855f7', 6: '#ec4899',
+    };
+
+    const MODEL_CHIPS = [
+        { kind: 'auto', short: LANG === 'zh' ? '自动' : 'Auto' },
+        { kind: 'fast', short: LANG === 'zh' ? '快速' : 'Fast' },
+        { kind: 'expert', short: LANG === 'zh' ? '专家' : 'Expert' },
+        { kind: 'heavy', short: LANG === 'zh' ? '重度' : 'Heavy' },
+    ];
+
     const L = {
-        chatTitle: LANG === 'zh' ? '聊天配额 / Chat Quotas' : 'Chat Quotas',
-        fast: LANG === 'zh' ? '快速 (Fast)' : 'Fast',
-        expert: LANG === 'zh' ? '专家 (Expert)' : 'Expert',
-        auto: LANG === 'zh' ? '自动 (Auto)' : 'Auto',
-        heavy: LANG === 'zh' ? '重度 (Heavy)' : 'Heavy',
-        usageTitle: LANG === 'zh' ? '使用量总限额 / Usage Limit' : 'Usage Total Limit',
-        usageEmpty: LANG === 'zh' ? '暂无用量数据，可打开设置 → 用量 刷新' : 'No usage data — open Settings → Usage',
+        modelTitle: LANG === 'zh' ? '当前模型' : 'Current model',
+        fast: LANG === 'zh' ? '快速' : 'Fast',
+        expert: LANG === 'zh' ? '专家' : 'Expert',
+        auto: LANG === 'zh' ? '自动' : 'Auto',
+        heavy: LANG === 'zh' ? '重度' : 'Heavy',
+        usageTitle: LANG === 'zh' ? '每周用量' : 'Weekly usage',
+        usageEmpty: LANG === 'zh' ? '暂无周用量数据（需 SuperGrok）' : 'No weekly usage (SuperGrok required)',
+        usedLabel: LANG === 'zh' ? '已用' : 'used',
+        remainLabel: LANG === 'zh' ? '剩余' : 'left',
         lastUpdate: LANG === 'zh' ? '更新' : 'Updated',
         loading: LANG === 'zh' ? '加载中…' : 'Loading…',
         refreshFail: LANG === 'zh' ? '加载失败' : 'Load failed',
         guest: LANG === 'zh' ? '游客' : 'Guest',
         loggedIn: LANG === 'zh' ? '已登录' : 'Logged in',
-        unlockHeavy: LANG === 'zh' ? '仅限 Heavy 订阅账户' : 'Heavy subscribers only',
+        unlockHeavy: LANG === 'zh' ? '需 Heavy' : 'Heavy only',
         resetLabel: LANG === 'zh' ? '重置' : 'Resets',
         active: LANG === 'zh' ? '当前' : 'Active',
-        countdown: LANG === 'zh' ? '冷却' : 'Cooldown',
+        noProducts: LANG === 'zh' ? '暂无分类明细' : 'No category breakdown',
+        think: LANG === 'zh' ? '思考' : 'Think',
+        deepSearch: 'DeepSearch',
+        deeperSearch: 'DeeperSearch',
+        unknownModel: LANG === 'zh' ? '未知' : 'Unknown',
     };
 
     const cfg = {
@@ -167,59 +189,185 @@
     };
 
     // ─── State ───
-    let cachedPointsUsage = null;
+    let cachedWeeklyUsage = null;   // { usagePercent, productUsage, currentPeriod, source }
+    let lastWeeklyFetchAt = 0;
+    let lastUiUsage = null;         // normalized weekly for UI
+    let lastSub = null;
     let lastModelName = null;
     let lastRequestKind = 'DEFAULT';
-    let refreshTimer = null;
+    let lastActiveCategory = null;
+    let hasRenderedContent = false;
+    let isRefreshing = false;
     let pollInterval = null;
-    let countdownTimers = {};   // { kind: intervalId }
+    let modelPollInterval = null;
     let domObserver = null;
     let queryBarObserver = null;
     let queryBarElement = null;
 
-    // ─── fetch interceptor (usage/points only — rate limits now fetched via active polling) ───
+    // ─── Weekly usage: GetGrokCreditsConfig (protobuf / grpc-web) ───
+    // Ported from working Grok Rate Limit Display (2.js) for SuperGrok weekly reset system.
+    function decodeVarint(buf, offset) {
+        let result = 0;
+        let shift = 0;
+        let pos = offset;
+        while (pos < buf.length) {
+            const byte = buf[pos++];
+            result |= (byte & 0x7f) << shift;
+            if ((byte & 0x80) === 0) break;
+            shift += 7;
+        }
+        return { value: result, next: pos };
+    }
+
+    function parseProtobufTimestamp(buf, offset, length) {
+        const end = offset + length;
+        let pos = offset;
+        let seconds = 0;
+        let nanos = 0;
+        while (pos < end) {
+            const tag = buf[pos++];
+            const field = tag >> 3;
+            const wire = tag & 0x07;
+            if (wire === 0) {
+                const decoded = decodeVarint(buf, pos);
+                pos = decoded.next;
+                if (field === 1) seconds = decoded.value;
+                else if (field === 2) nanos = decoded.value;
+            } else {
+                break;
+            }
+        }
+        if (!seconds) return null;
+        return new Date(seconds * 1000 + nanos / 1e6).toISOString();
+    }
+
+    function parseGrpcWebCreditsConfig(buffer) {
+        const buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+        if (buf.length < 10) return null;
+
+        let usagePercent = null;
+        const productUsage = [];
+        let periodStart = null;
+        let periodEnd = null;
+
+        for (let i = 0; i < buf.length - 5; i++) {
+            if (buf[i] === 0x0d) {
+                const view = new DataView(buf.buffer, buf.byteOffset + i + 1, 4);
+                const val = Math.round(view.getFloat32(0, true));
+                if (val >= 0 && val <= 100) usagePercent = val;
+                break;
+            }
+        }
+
+        for (let i = 0; i < buf.length - 7; i++) {
+            if (buf[i] === 0x3a && buf[i + 1] === 0x07 && buf[i + 2] === 0x08) {
+                const product = buf[i + 3];
+                if (buf[i + 4] === 0x15) {
+                    const view = new DataView(buf.buffer, buf.byteOffset + i + 5, 4);
+                    const pct = Math.round(view.getFloat32(0, true));
+                    if (pct >= 0 && pct <= 100) {
+                        productUsage.push({ product, usagePercent: pct });
+                    }
+                }
+            }
+        }
+
+        for (let i = 0; i < buf.length - 4; i++) {
+            if (buf[i] === 0x42 && buf[i + 1] > 0 && buf[i + 1] < 40) {
+                const blockLen = buf[i + 1];
+                const blockStart = i + 2;
+                const blockEnd = blockStart + blockLen;
+                if (blockEnd > buf.length) continue;
+                let pos = blockStart;
+                while (pos < blockEnd - 1) {
+                    const tag = buf[pos++];
+                    const field = tag >> 3;
+                    const wire = tag & 0x07;
+                    if (wire === 2) {
+                        const len = buf[pos++];
+                        if (field === 2 && !periodStart) {
+                            periodStart = parseProtobufTimestamp(buf, pos, len);
+                        } else if (field === 3 && !periodEnd) {
+                            periodEnd = parseProtobufTimestamp(buf, pos, len);
+                        }
+                        pos += len;
+                    } else if (wire === 0) {
+                        const decoded = decodeVarint(buf, pos);
+                        pos = decoded.next;
+                    } else {
+                        break;
+                    }
+                }
+                if (periodStart || periodEnd) break;
+            }
+        }
+
+        if (usagePercent === null && productUsage.length === 0) {
+            if (periodStart || periodEnd) {
+                return {
+                    usagePercent: 0,
+                    currentPeriod: { type: 'weekly', start: periodStart, end: periodEnd },
+                    productUsage: [],
+                };
+            }
+            return null;
+        }
+
+        return {
+            usagePercent: usagePercent ?? 0,
+            currentPeriod: { type: 'weekly', start: periodStart, end: periodEnd },
+            productUsage,
+        };
+    }
+
+    async function fetchGrokCreditsConfig() {
+        const url = window.location.origin + '/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
+        const res = await fetchWithTimeout(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'content-type': 'application/grpc-web+proto',
+                'connect-protocol-version': '1',
+                'x-grpc-web': '1',
+            },
+            body: new Uint8Array([0, 0, 0, 0, 0]),
+        }, FETCH_TIMEOUT_MS);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return parseGrpcWebCreditsConfig(await res.arrayBuffer());
+    }
+
+    function formatPeriodReset(isoOrText) {
+        if (!isoOrText) return '';
+        const d = new Date(isoOrText);
+        if (!Number.isNaN(d.getTime())) {
+            return d.toLocaleString(LANG === 'zh' ? 'zh-CN' : undefined, {
+                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+            });
+        }
+        return String(isoOrText);
+    }
+
+    // Optional: intercept native GetGrokCreditsConfig responses while browsing
     try {
         const __origFetch = window.fetch;
         window.fetch = async function (input, init) {
             const res = await __origFetch.apply(this, arguments);
             try {
-                const urlStr = typeof input === 'string' ? input : (input && input.url) || (init && init.url) || '';
-                if (typeof urlStr === 'string' && urlStr.includes('grok.com/rest')) {
-                    const ct = (res.headers && res.headers.get) ? res.headers.get('content-type') || '' : '';
-                    if (ct.includes('json')) {
-                        const clone = res.clone();
-                        const j = await clone.json().catch(() => null);
-                        if (j) {
-                            const jstr = JSON.stringify(j);
-                            let m = jstr.match(/随\s*SuperGrok\s*附赠的免费积分[，,]?\s*(\d{1,3})%\s*已用\s*[·•]\s*在\s*([^重置\r\n]+?)\s*重置/i);
-                            if (m) {
-                                cachedPointsUsage = {
-                                    percent: parseInt(m[1], 10),
-                                    resetDate: m[2].trim(),
-                                    raw: m[0],
-                                    source: 'intercepted'
-                                };
-                            } else if (!cachedPointsUsage) {
-                                const p = walkFindPercent(j, 0);
-                                if (p != null) {
-                                    cachedPointsUsage = {
-                                        percent: Math.max(0, Math.min(100, Math.round(p))),
-                                        resetDate: '',
-                                        source: 'intercepted-fallback'
-                                    };
-                                }
+                const urlStr = typeof input === 'string' ? input : (input && input.url) || '';
+                if (typeof urlStr === 'string' && urlStr.includes('GetGrokCreditsConfig')) {
+                    const buf = await res.clone().arrayBuffer().catch(() => null);
+                    if (buf) {
+                        const parsed = parseGrpcWebCreditsConfig(buf);
+                        if (parsed && typeof parsed.usagePercent === 'number') {
+                            cachedWeeklyUsage = { ...parsed, source: 'intercepted' };
+                            lastWeeklyFetchAt = Date.now();
+                            // Quietly paint new weekly numbers if panel already shown
+                            if (hasRenderedContent && getPanel()) {
+                                const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
+                                const sub = detectSubscription();
+                                updateBadge(sub);
+                                updateContent({ usage, sub, snap: getModelSnapshot(), timestamp: Date.now(), silent: true });
                             }
-                        }
-                    } else {
-                        const t = await res.clone().text().catch(() => '');
-                        const m = t.match(/随\s*SuperGrok\s*附赠的免费积分[，,]?\s*(\d{1,3})%\s*已用\s*[·•]\s*在\s*([^重置\r\n]+?)\s*重置/i);
-                        if (m) {
-                            cachedPointsUsage = {
-                                percent: parseInt(m[1], 10),
-                                resetDate: m[2].trim(),
-                                raw: m[0],
-                                source: 'intercepted'
-                            };
                         }
                     }
                 }
@@ -228,21 +376,19 @@
         };
     } catch (e) { /* ignore */ }
 
-    function walkFindPercent(o, d) {
-        if (!o || typeof o !== 'object' || d > 5) return null;
-        for (const k in o) {
-            if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
-            const v = o[k];
-            if (typeof v === 'number' && v >= 0 && v <= 100 && /percent|used|usage|quota|积分/i.test(k)) return v;
-            const sub = walkFindPercent(v, d + 1);
-            if (sub != null) return sub;
-        }
-        return null;
-    }
-
     // ─── Subscription detection ───
     function detectSubscription() {
         try {
+            // If weekly credits API already returned data, treat as SuperGrok-tier
+            if (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number') {
+                const fullText = (document.body?.innerText || '').toLowerCase();
+                const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
+                const headerText = headerEl ? headerEl.innerText.toLowerCase() : '';
+                const isHeavy = headerText.includes('supergrok heavy') || headerText.includes('grok heavy')
+                    || (fullText.includes('supergrok heavy') && headerText.includes('heavy'));
+                if (isHeavy) return { tier: 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true };
+                return { tier: 'SuperGrok', color: '#047857', canUseHeavy: false };
+            }
             const fullText = document.body.innerText.toLowerCase();
             const loginBtn = document.querySelector('a[href*="login"], button[aria-label*="sign" i], [data-testid*="login"]');
             if (loginBtn && !fullText.includes('supergrok')) {
@@ -267,131 +413,7 @@
         }
     }
 
-    // ─── Points usage ───
-    function getPointsUsage() {
-        if (cachedPointsUsage && typeof cachedPointsUsage.percent === 'number') {
-            return cachedPointsUsage;
-        }
-        try {
-            const bodyText = document.body.innerText || '';
-            let m = bodyText.match(/随\s*SuperGrok\s*附赠的免费积分[，,]?\s*(\d{1,3})%\s*已用\s*[·•]\s*在\s*([^重置\r\n]+?)\s*重置/i);
-            if (m) {
-                const found = { percent: parseInt(m[1], 10), resetDate: m[2].trim(), raw: m[0] };
-                cachedPointsUsage = found;
-                return found;
-            }
-            m = bodyText.match(/SuperGrok.{0,40}?(\d{1,3})%\s*已用.{0,10}?[·•]\s*在\s*(.+?)\s*重置/i);
-            if (m) {
-                const found = { percent: parseInt(m[1], 10), resetDate: m[2].trim() };
-                cachedPointsUsage = found;
-                return found;
-            }
-            m = bodyText.match(/Free points?\s*(?:included with|bundled with|for)\s*SuperGrok[,.]?\s*(\d{1,3})%\s*(?:used|used up).{0,10}?[·•]?\s*(?:Resets?|Reset)\s*(?:on\s+)?([^\n\r]+)/i);
-            if (m) {
-                const found = { percent: parseInt(m[1], 10), resetDate: m[2].trim(), raw: m[0] };
-                cachedPointsUsage = found;
-                return found;
-            }
-            const lines = bodyText.split(/[\r\n]+/);
-            for (let line of lines) {
-                if (/SuperGrok/i.test(line) && /%/.test(line) && /(已用|used|reset|重置)/i.test(line)) {
-                    const pm = line.match(/(\d{1,3})%/);
-                    if (pm) {
-                        const rm = line.match(/(?:重置|reset|Resets?).{0,40}/i);
-                        const found = {
-                            percent: parseInt(pm[1], 10),
-                            resetDate: rm ? rm[0].replace(/^(?:重置|reset|Resets?)\s*(?:on\s*)?/i, '').trim() : '',
-                            raw: line.trim()
-                        };
-                        cachedPointsUsage = found;
-                        return found;
-                    }
-                }
-            }
-        } catch {}
-        return null;
-    }
-
-    // ─── Subscription usage API ───
-    function deepSearchString(obj, regex, maxDepth) {
-        if (maxDepth === undefined) maxDepth = 6;
-        const seen = new WeakSet();
-        const walk = (o, d) => {
-            if (!o || typeof o !== 'object' || d > maxDepth || seen.has(o)) return null;
-            seen.add(o);
-            for (const k in o) {
-                if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
-                const v = o[k];
-                if (typeof v === 'string') { const rm = v.match(regex); if (rm) return rm; }
-                else if (typeof v === 'object') { const r = walk(v, d + 1); if (r) return r; }
-            }
-            return null;
-        };
-        return walk(obj, 0);
-    }
-
-    function deepFindPercent(obj) {
-        const walk = (o, d) => {
-            if (!o || typeof o !== 'object' || d > 5) return null;
-            for (const k in o) {
-                if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
-                const v = o[k];
-                if (typeof v === 'number' && v >= 0 && v <= 100 && /percent|used|usage|quota/i.test(k)) return v;
-                if (typeof v === 'object') { const r = walk(v, d + 1); if (r != null) return r; }
-            }
-            return null;
-        };
-        return walk(obj, 0);
-    }
-
-    function deepFindResetDate(obj) {
-        const walk = (o, d) => {
-            if (!o || typeof o !== 'object' || d > 5) return null;
-            for (const k in o) {
-                if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
-                const v = o[k];
-                if (/reset|renew|expire|billing|next|date/i.test(k)) {
-                    if (typeof v === 'string' && v.length > 3) return v;
-                    if (v && typeof v === 'object' && v.date) return v.date;
-                }
-                if (typeof v === 'object') { const r = walk(v, d + 1); if (r) return r; }
-            }
-            return null;
-        };
-        return walk(obj, 0);
-    }
-
-    function parseUsageJson(data) {
-        if (!data) return null;
-        try {
-            const fullMatch = deepSearchString(data, /随\s*SuperGrok\s*附赠的免费积分[，,]?\s*(\d{1,3})%\s*已用\s*[·•]\s*在\s*([^重置\r\n]+?)\s*重置/i);
-            if (fullMatch) {
-                return { percent: parseInt(fullMatch[1], 10), resetDate: fullMatch[2].trim(), raw: fullMatch[0], source: 'api' };
-            }
-            const candidates = Array.isArray(data) ? data : [data, data.subscription, data.usage, data.quota, data.credits, ...(Array.isArray(data.subscriptions) ? data.subscriptions : [])];
-            for (let item of candidates) {
-                if (!item || typeof item !== 'object') continue;
-                let pct = null;
-                if (typeof item.percentUsed === 'number') pct = item.percentUsed;
-                else if (typeof item.usagePercent === 'number') pct = item.usagePercent;
-                else if (typeof item.percent === 'number' && item.percent <= 100) pct = item.percent;
-                else if (item.usage && typeof item.usage.percent === 'number') pct = item.usage.percent;
-                else if (item.points && typeof item.points.percent === 'number') pct = item.points.percent;
-                else if (item.freePoints && typeof item.freePoints.usedPercent === 'number') pct = item.freePoints.usedPercent;
-                if (pct == null) pct = deepFindPercent(item);
-                const reset = deepFindResetDate(item);
-                if (pct != null) {
-                    return {
-                        percent: Math.max(0, Math.min(100, Math.round(pct))),
-                        resetDate: (reset && typeof reset === 'string') ? reset.replace(/T.*|Z$/g, '').trim() : '',
-                        source: 'api'
-                    };
-                }
-            }
-        } catch {}
-        return null;
-    }
-
+    // ─── Weekly usage fetch ───
     async function fetchWithTimeout(url, options, timeoutMs) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -402,285 +424,175 @@
         }
     }
 
-    async function fetchSubscriptionUsage() {
-        if (cachedPointsUsage && typeof cachedPointsUsage.percent === 'number') {
-            return cachedPointsUsage;
-        }
-        const endpoints = [
-            { url: 'https://grok.com/rest/subscriptions', method: 'GET' },
-            { url: 'https://grok.com/rest/subscriptions', method: 'POST', body: '{}' },
-            { url: 'https://grok.com/rest/subscription', method: 'GET' },
-            { url: 'https://grok.com/rest/user', method: 'GET' },
-            { url: 'https://grok.com/rest/user', method: 'POST', body: '{}' },
-            { url: 'https://grok.com/rest/usage', method: 'POST', body: '{}' },
-            { url: 'https://grok.com/rest/account/usage', method: 'POST', body: '{}' },
-        ];
-        const fetchPromises = endpoints.map(ep =>
-            fetchWithTimeout(ep.url, {
-                method: ep.method,
-                headers: { 'Content-Type': 'application/json' },
-                body: ep.body || undefined,
-                credentials: 'include'
-            }, FETCH_TIMEOUT_MS)
-                .then(async (res) => {
-                    if (res.ok) {
-                        const json = await res.json();
-                        const parsed = parseUsageJson(json);
-                        if (parsed && typeof parsed.percent === 'number') return parsed;
-                    }
-                    throw new Error('no data');
-                })
-                .catch(() => null)
-        );
-        const results = await Promise.allSettled(fetchPromises);
-        for (const r of results) {
-            if (r.status === 'fulfilled' && r.value) {
-                cachedPointsUsage = r.value;
-                return r.value;
-            }
-        }
-        return null;
-    }
-
-    // ─── Rate limit API ───
-    function apiHeaders() {
-        return {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-Xai-Request-Id': Math.random().toString(16).slice(2),
-        };
-    }
-
-    function getRateLimitTotal(info) {
-        if (!info || typeof info !== 'object') return null;
-        const direct = info.totalQueries ?? info.totalTokens ?? info.maxQueries
-            ?? info.limit ?? info.queryLimit ?? info.quotaLimit ?? info.maxRequests ?? info.total;
-        if (typeof direct === 'number') return direct;
-        const rem = info.remainingQueries ?? info.remainingTokens ?? info.remaining;
-        const used = info.usedQueries ?? info.usedTokens ?? info.used;
-        if (typeof rem === 'number' && typeof used === 'number') return rem + used;
-        return null;
-    }
-
-    function getRateLimitRemaining(info) {
-        if (!info || typeof info !== 'object') return null;
-        const rem = info.remainingQueries ?? info.remainingTokens ?? info.remaining;
-        return typeof rem === 'number' ? rem : null;
-    }
-
-    function getRateLimitWaitTime(rateLimit) {
-        if (!rateLimit) return 0;
-        const direct = rateLimit.waitTimeSeconds
-            ?? rateLimit.resetAfterSeconds
-            ?? rateLimit.retryAfterSeconds
-            ?? rateLimit.windowSizeSeconds
-            ?? rateLimit.secondsUntilReset
-            ?? rateLimit.timeUntilResetSeconds;
-        if (Number.isFinite(direct) && direct > 0) return direct;
-        return 0;
-    }
-
-    function normalizeRateLimitResponse(data) {
-        if (!data || typeof data !== 'object') return { error: true };
-        if (data.error) return data;
-        const disabledMsg = data.message || data.errorMessage || data.detail || data.error?.message;
-        if (typeof disabledMsg === 'string' && /temporarily disabled|暂时禁用|暂时关闭/i.test(disabledMsg)) {
-            return { disabled: true, message: disabledMsg };
-        }
-        const pick = (info) => {
-            const rem = getRateLimitRemaining(info);
-            if (rem == null) return null;
-            return {
-                remainingQueries: rem,
-                totalQueries: getRateLimitTotal(info),
-                waitTimeSeconds: getRateLimitWaitTime(info),
-            };
-        };
-        const high = pick(data.highEffortRateLimits);
-        const low = pick(data.lowEffortRateLimits);
-        if (high && low) {
-            return {
-                remainingQueries: high.remainingQueries,
-                totalQueries: high.totalQueries,
-                waitTimeSeconds: high.waitTimeSeconds,
-                lowRemaining: low.remainingQueries,
-                lowTotal: low.totalQueries,
-            };
-        }
-        if (high) return high;
-        if (low) return low;
-        const direct = pick(data);
-        if (direct) return direct;
-        return { error: true };
-    }
-
     /**
-     * Fetch rate limit for a specific model+requestKind.
-     * This is the core fetch — used by polling and event-driven refresh.
+     * Fetch SuperGrok weekly usage via GetGrokCreditsConfig.
+     * Falls back to cache when within WEEKLY_REFRESH_MS.
+     * force=true always re-fetches (manual refresh button).
      */
-    async function fetchRateLimit(modelName, requestKind) {
+    async function fetchWeeklyUsage(force) {
+        const now = Date.now();
+        if (!force && cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number'
+            && (now - lastWeeklyFetchAt) < WEEKLY_REFRESH_MS) {
+            return cachedWeeklyUsage;
+        }
         try {
-            const res = await fetchWithTimeout('https://grok.com/rest/rate-limits', {
-                method: 'POST',
-                headers: apiHeaders(),
-                body: JSON.stringify({ modelName, requestKind }),
-                credentials: 'include',
-            }, FETCH_TIMEOUT_MS);
-            if (!res.ok) return null;
-            const raw = await res.json();
-            return normalizeRateLimitResponse(raw);
-        } catch {
-            return null;
+            const parsed = await fetchGrokCreditsConfig();
+            if (parsed && typeof parsed.usagePercent === 'number') {
+                cachedWeeklyUsage = { ...parsed, source: 'api' };
+                lastWeeklyFetchAt = now;
+                return cachedWeeklyUsage;
+            }
+        } catch (e) {
+            console.warn('[GrokQuotaPro] weekly usage fetch failed:', e);
         }
+        // Return stale cache if available
+        if (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number') {
+            return cachedWeeklyUsage;
+        }
+        return null;
     }
 
-    /**
-     * Fetch quotas for ALL display categories.
-     * Uses model detection for the current model, falls back to generic names.
-     */
-    async function fetchAllQuotas(sub) {
+    /** Normalize weekly usage for UI (percent + reset date string + products). */
+    function normalizeWeeklyForUi(usage) {
+        if (!usage || typeof usage.usagePercent !== 'number') return null;
+        const pct = Math.max(0, Math.min(100, Math.round(usage.usagePercent)));
+        const resetIso = usage.currentPeriod?.end || '';
+        return {
+            percent: pct,
+            remaining: Math.max(0, 100 - pct),
+            resetDate: formatPeriodReset(resetIso),
+            resetIso,
+            productUsage: Array.isArray(usage.productUsage) ? usage.productUsage : [],
+            source: usage.source || 'api',
+        };
+    }
+
+    // ─── Model detection snapshot (local only, no network) ───
+    function getModelSnapshot() {
         const queryBar = getQueryBar();
-        const detectedModel = getCurrentModelName(queryBar);
-        const requestKind = detectRequestKind(queryBar, detectedModel);
-        const activeCategory = MODEL_TO_CATEGORY[detectedModel] || 'expert';
+        const modelName = getCurrentModelName(queryBar);
+        const requestKind = detectRequestKind(queryBar, modelName);
+        const category = MODEL_TO_CATEGORY[modelName] || 'expert';
+        return { modelName, requestKind, category };
+    }
 
-        // Track changes for logging
-        lastModelName = detectedModel;
-        lastRequestKind = requestKind;
+    function requestKindLabel(rk) {
+        if (rk === 'REASONING') return L.think;
+        if (rk === 'DEEPSEARCH') return L.deepSearch;
+        if (rk === 'DEEPERSEARCH') return L.deeperSearch;
+        return '';
+    }
 
-        const chat = {};
-        const tasks = [];
+    function friendlyModelLabel(modelName) {
+        const map = {
+            'grok-4-auto': LANG === 'zh' ? '自动' : 'Auto',
+            'grok-3': LANG === 'zh' ? '快速' : 'Fast',
+            'grok-4': LANG === 'zh' ? '专家' : 'Expert',
+            'grok-4-heavy': LANG === 'zh' ? '重度' : 'Heavy',
+            'grok-420': 'Grok 4.20',
+            'grok-420-computer-use-sa': 'Grok 4.3',
+            'grok-4-mini-thinking-tahoe': 'Grok 4 Fast',
+            'grok-4-1-non-thinking-w-tool': 'Grok 4.1',
+            'grok-4-1-thinking-1129': 'Grok 4.1 Think',
+        };
+        return map[modelName] || modelName || L.unknownModel;
+    }
 
-        // Build the list of model names to query
-        const queries = [
-            { kind: 'auto', modelName: CHAT_MODELS.auto, rk: 'DEFAULT' },
-            { kind: 'fast', modelName: CHAT_MODELS.fast, rk: 'DEFAULT' },
-            { kind: 'expert', modelName: CHAT_MODELS.expert, rk: 'DEFAULT' },
-        ];
-        if (sub && sub.canUseHeavy) {
-            queries.push({ kind: 'heavy', modelName: CHAT_MODELS.heavy, rk: 'DEFAULT' });
-        }
-
-        for (const q of queries) {
-            // If this query matches the currently-selected model, use the detected modelName + requestKind
-            const isActiveModel = (q.kind === activeCategory);
-            const fnModelName = isActiveModel ? detectedModel : q.modelName;
-            const fnRequestKind = isActiveModel ? requestKind : q.rk;
-
-            tasks.push(
-                fetchRateLimit(fnModelName, fnRequestKind).then(result => {
-                    const parsed = result || { error: true };
-                    chat[q.kind] = parsed;
-                    // Store active-model flag for UI highlighting
-                    if (isActiveModel) chat[q.kind]._isActive = true;
-                    // grok-4-auto has a separate low-effort 50-query limit; swap primary display
-                    if (q.kind === 'auto' && parsed && typeof parsed.lowRemaining === 'number') {
-                        chat[q.kind]._autoMode = true;
-                    }
-                })
-            );
-        }
-
-        await Promise.all(tasks);
-        return { chat, timestamp: Date.now(), sub, activeModel: detectedModel, activeRequestKind: requestKind };
+    function formatResetRemaining(resetIso) {
+        if (!resetIso) return '';
+        const end = new Date(resetIso).getTime();
+        if (!Number.isFinite(end)) return '';
+        let sec = Math.max(0, Math.floor((end - Date.now()) / 1000));
+        if (sec <= 0) return LANG === 'zh' ? '即将重置' : 'Resetting soon';
+        const d = Math.floor(sec / 86400);
+        sec %= 86400;
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        if (d > 0) return LANG === 'zh' ? `${d}天${h}小时后` : `in ${d}d ${h}h`;
+        if (h > 0) return LANG === 'zh' ? `${h}小时${m}分后` : `in ${h}h ${m}m`;
+        return LANG === 'zh' ? `${m}分钟后` : `in ${m}m`;
     }
 
     // ─── UI builders ───
     function buildUsageSection(usage) {
-        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.usageTitle}</div>`;
+        let html = `<div class="gqp-section gqp-usage-sec"><div class="gqp-sec-title">${L.usageTitle}</div>`;
         if (!usage || typeof usage.percent !== 'number') {
-            return html + `<div class="gqp-hint" style="padding:4px 2px">${L.usageEmpty}</div></div>`;
+            return html + `<div class="gqp-hint" style="padding:6px 2px">${L.usageEmpty}</div></div>`;
         }
         const pct = usage.percent;
+        const remaining = usage.remaining != null ? usage.remaining : Math.max(0, 100 - pct);
         const cls = pct >= 90 ? 'c-danger' : pct >= 70 ? 'c-warn' : 'c-ok';
-        const usedLabel = LANG === 'zh' ? '已用' : 'used';
-        html += `<div class="gqp-row gqp-usage-row" style="flex-direction:column;align-items:stretch;padding:6px 10px;">`;
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">`;
-        html += `<span class="gqp-name">${LANG === 'zh' ? '免费积分' : 'Free points'}</span>`;
-        html += `<span class="gqp-val ${cls}" style="font-size:13px;font-weight:700;">${pct}% ${usedLabel}</span>`;
-        html += `</div>`;
-        html += `<div class="gqp-progress"><div class="gqp-bar ${cls}" style="width:${pct}%"></div></div>`;
-        if (usage.resetDate) {
-            html += `<div class="gqp-usage-text" style="margin-top:3px;font-size:10.5px;color:var(--hint);">${L.resetLabel}: ${usage.resetDate}</div>`;
+        const remainHint = formatResetRemaining(usage.resetIso);
+
+        html += `<div class="gqp-usage-card">`;
+        // Big remaining + used summary
+        html += `<div class="gqp-usage-hero">`;
+        html += `<div class="gqp-usage-big ${cls}">${remaining}<span class="gqp-usage-unit">%</span></div>`;
+        html += `<div class="gqp-usage-hero-meta">`;
+        html += `<div class="gqp-usage-hero-label">${L.remainLabel}</div>`;
+        html += `<div class="gqp-usage-hero-sub">${pct}% ${L.usedLabel}</div>`;
+        html += `</div></div>`;
+
+        // Progress (used portion)
+        html += `<div class="gqp-progress gqp-progress-lg"><div class="gqp-bar ${cls}" style="width:${pct}%"></div></div>`;
+
+        // Product breakdown
+        const products = (usage.productUsage || []).filter(p => (p.usagePercent || 0) > 0)
+            .sort((a, b) => (b.usagePercent || 0) - (a.usagePercent || 0));
+        if (products.length > 0) {
+            html += `<div class="gqp-product-bar">`;
+            for (const p of products) {
+                const color = PRODUCT_COLORS[p.product] || '#6b7280';
+                const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
+                html += `<div class="gqp-product-seg" style="width:${p.usagePercent}%;background:${color}" title="${name}: ${p.usagePercent}%"></div>`;
+            }
+            html += `</div>`;
+            html += `<div class="gqp-products">`;
+            for (const p of products) {
+                const color = PRODUCT_COLORS[p.product] || '#6b7280';
+                const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
+                html += `<div class="gqp-product-item"><span class="gqp-dot" style="background:${color}"></span>`;
+                html += `<span class="gqp-product-name">${name}</span><span class="gqp-product-pct">${p.usagePercent}%</span></div>`;
+            }
+            html += `</div>`;
+        } else if (pct > 0) {
+            html += `<div class="gqp-hint" style="margin-top:6px">${L.noProducts}</div>`;
+        }
+
+        if (usage.resetDate || remainHint) {
+            html += `<div class="gqp-reset-line">`;
+            if (usage.resetDate) html += `<span>${L.resetLabel} ${usage.resetDate}</span>`;
+            if (remainHint) html += `<span class="gqp-reset-eta">${remainHint}</span>`;
+            html += `</div>`;
         }
         html += `</div></div>`;
         return html;
     }
 
-    function formatTimer(seconds) {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = seconds % 60;
-        if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
-
-    function valClass(rem, total) {
-        if (typeof rem !== 'number') return '';
-        if (rem <= 5) return 'c-danger';
-        if (total && typeof total === 'number') {
-            const pct = rem / total;
-            if (pct < 0.1) return 'c-danger';
-            if (pct < 0.5) return 'c-warn';
-        } else if (rem < 10) return 'c-danger';
-        else if (rem < 30) return 'c-warn';
-        return 'c-ok';
-    }
-
-    function buildQuotaRow(label, info, hint, isActive) {
-        if (hint) {
-            return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-hint">${hint}</span></div>`;
-        }
-        if (!info || info.error) {
-            return `<div class="gqp-row"><span class="gqp-name">${label}</span><span class="gqp-val c-danger">${L.refreshFail}</span></div>`;
-        }
-
-        const isAuto = !!(info._autoMode);
-        // Auto mode: primary = lowRemaining (the 50-query Auto-specific limit), secondary = highRemaining
-        const primaryRem = isAuto ? (info.lowRemaining ?? info.remainingQueries ?? 'N/A') : (info.remainingQueries ?? info.remaining ?? 'N/A');
-        const primaryTotal = isAuto ? (info.lowTotal ?? info.totalQueries ?? null) : (info.totalQueries ?? info.total ?? null);
-        const waitSec = info.waitTimeSeconds || 0;
-        const cls = valClass(primaryRem, primaryTotal);
-        const tot = primaryTotal != null ? `<span class="gqp-total">/ ${primaryTotal}</span>` : '';
-
-        // Countdown display when remaining is 0
-        let valHtml;
-        const dataAttr = isActive ? ' data-gqp-active="1"' : '';
-        if (typeof primaryRem === 'number' && primaryRem <= 0 && waitSec > 0) {
-            const labelKind = label === L.fast ? 'fast' : label === L.expert ? 'expert' : label === L.auto ? 'auto' : 'heavy';
-            valHtml = `<span class="gqp-val c-danger gqp-countdown" data-gqp-kind="${labelKind}" data-gqp-wait="${waitSec}">${formatTimer(waitSec)}</span>`;
-        } else {
-            valHtml = `<span class="gqp-val ${cls}">${primaryRem}</span>`;
-        }
-
-        // Secondary row: for Auto mode show high effort count; for others show low effort count
-        let extra = '';
-        if (isAuto) {
-            // Auto mode: secondary shows high effort
-            const highRem = info.remainingQueries ?? 'N/A';
-            const highTot = info.totalQueries != null ? ` / ${info.totalQueries}` : '';
-            const highLabel = LANG === 'zh' ? '高消耗' : 'High';
-            extra = `<div class="gqp-usage-text" style="margin-top:2px;font-size:10px;color:var(--hint);">${highLabel}: ${highRem}${highTot}</div>`;
-        } else if (typeof info.lowRemaining === 'number') {
-            const lowTot = info.lowTotal != null ? ` / ${info.lowTotal}` : '';
-            extra = `<div class="gqp-usage-text" style="margin-top:2px;font-size:10px;color:var(--hint);">${LANG === 'zh' ? '低消耗' : 'Low'}: ${info.lowRemaining}${lowTot}</div>`;
-        }
-
-        const activeDot = isActive ? '<span class="gqp-active-dot" title="' + L.active + '"></span>' : '';
-        return `<div class="gqp-row${isActive ? ' gqp-row-active' : ''}" style="flex-direction:column;align-items:stretch;"${dataAttr}><div style="display:flex;justify-content:space-between;align-items:center;"><span class="gqp-name">${activeDot}${label}</span><span class="gqp-num">${valHtml}${tot}</span></div>${extra}</div>`;
-    }
-
-    function buildChatSection(chat, sub) {
-        chat = chat || {};
+    function buildModelSection(snap, sub) {
         const s = sub || { canUseHeavy: false };
-        let html = `<div class="gqp-section"><div class="gqp-sec-title">${L.chatTitle}</div>`;
-        html += buildQuotaRow(L.auto, chat.auto, null, !!(chat.auto && chat.auto._isActive));
-        html += buildQuotaRow(L.fast, chat.fast, null, !!(chat.fast && chat.fast._isActive));
-        html += buildQuotaRow(L.expert, chat.expert, null, !!(chat.expert && chat.expert._isActive));
-        html += s.canUseHeavy
-            ? buildQuotaRow(L.heavy, chat.heavy, null, !!(chat.heavy && chat.heavy._isActive))
-            : buildQuotaRow(L.heavy, null, L.unlockHeavy, false);
-        return html + '</div>';
+        const active = (snap && snap.category) || 'expert';
+        const rk = requestKindLabel(snap && snap.requestKind);
+        const detail = friendlyModelLabel(snap && snap.modelName);
+
+        let html = `<div class="gqp-section gqp-model-sec"><div class="gqp-sec-title">${L.modelTitle}</div>`;
+        html += `<div class="gqp-chip-row">`;
+        for (const chip of MODEL_CHIPS) {
+            const isHeavy = chip.kind === 'heavy';
+            const locked = isHeavy && !s.canUseHeavy;
+            const isOn = chip.kind === active && !locked;
+            let cls = 'gqp-chip';
+            if (isOn) cls += ' gqp-chip-on';
+            if (locked) cls += ' gqp-chip-locked';
+            const title = locked ? L.unlockHeavy : (isOn ? L.active : chip.short);
+            html += `<div class="${cls}" data-kind="${chip.kind}" title="${title}">${chip.short}</div>`;
+        }
+        html += `</div>`;
+        html += `<div class="gqp-model-detail">`;
+        html += `<span class="gqp-model-code">${detail}</span>`;
+        if (rk) html += `<span class="gqp-model-rk">${rk}</span>`;
+        html += `</div></div>`;
+        return html;
     }
 
     // ─── Panel management ───
@@ -713,89 +625,137 @@
         }
     }
 
-    function startCountdowns() {
-        // Clear any existing countdown timers
-        for (const k in countdownTimers) {
-            clearInterval(countdownTimers[k]);
-        }
-        countdownTimers = {};
-
-        const panel = getPanel();
-        if (!panel) return;
-
-        const countdownEls = panel.querySelectorAll('.gqp-countdown');
-        countdownEls.forEach(el => {
-            const kind = el.dataset.gqpKind;
-            if (!kind || countdownTimers[kind]) return;
-
-            let remaining = parseInt(el.dataset.gqpWait, 10) || 0;
-            if (remaining <= 0) return;
-
-            countdownTimers[kind] = setInterval(() => {
-                remaining--;
-                if (remaining <= 0) {
-                    clearInterval(countdownTimers[kind]);
-                    delete countdownTimers[kind];
-                    // Trigger immediate refresh when countdown expires
-                    if (getPanel() && document.visibilityState === 'visible') {
-                        refreshData();
-                    }
-                } else {
-                    el.textContent = formatTimer(remaining);
-                }
-            }, 1000);
-        });
+    function setRefreshSpinning(on) {
+        const btn = getPanel()?.querySelector('#gqp-refresh');
+        if (!btn) return;
+        btn.classList.toggle('gqp-spin', !!on);
+        btn.disabled = !!on;
     }
 
-    function updateContent(data) {
+    function updateFooter(ts) {
+        const footer = getPanel()?.querySelector('.pfooter');
+        if (!footer) return;
+        const time = ts
+            ? new Date(ts).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })
+            : '--';
+        footer.innerHTML = `<span>${L.lastUpdate}: ${time}</span><span class="fver">v${VERSION}</span>`;
+    }
+
+    function updateContent({ usage, sub, snap, timestamp, silent } = {}) {
         const p = getPanel();
         if (!p) return;
         const body = p.querySelector('.pbody');
-        const usage = (data && data.usage) ? data.usage : getPointsUsage();
-        if (body) body.innerHTML = buildUsageSection(usage) + buildChatSection(data ? data.chat : null, data ? data.sub : null);
+        if (!body) return;
 
-        // Start countdowns for any models at 0 quota
-        startCountdowns();
+        if (usage) lastUiUsage = usage;
+        if (sub) lastSub = sub;
+        if (snap) {
+            lastModelName = snap.modelName;
+            lastRequestKind = snap.requestKind;
+            lastActiveCategory = snap.category;
+        }
 
-        const footer = p.querySelector('.pfooter');
-        const ts = (data && data.timestamp) ? new Date(data.timestamp).toLocaleTimeString(LANG === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' }) : '--';
-        if (footer) footer.innerHTML = `<span>${L.lastUpdate}: ${ts}</span><span class="fver">v${VERSION}</span>`;
+        const u = usage || lastUiUsage || normalizeWeeklyForUi(cachedWeeklyUsage);
+        const s = sub || lastSub || detectSubscription();
+        const m = snap || getModelSnapshot();
+
+        // In-place render — never flash a blank loading screen when content exists
+        body.innerHTML = buildUsageSection(u) + buildModelSection(m, s);
+        hasRenderedContent = true;
+        if (timestamp) updateFooter(timestamp);
+        else if (!silent) updateFooter(Date.now());
+    }
+
+    /** Local-only model chip update (no network, no flash). */
+    function syncModelChips() {
+        if (!hasRenderedContent || !getPanel()) return;
+        const snap = getModelSnapshot();
+        if (snap.modelName === lastModelName
+            && snap.requestKind === lastRequestKind
+            && snap.category === lastActiveCategory) {
+            return;
+        }
+        lastModelName = snap.modelName;
+        lastRequestKind = snap.requestKind;
+        lastActiveCategory = snap.category;
+
+        const body = getPanel().querySelector('.pbody');
+        if (!body) return;
+        const modelSec = body.querySelector('.gqp-model-sec');
+        const html = buildModelSection(snap, lastSub || detectSubscription());
+        if (modelSec) {
+            // Replace only model section to avoid usage flicker
+            const tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            const next = tmp.firstElementChild;
+            if (next) modelSec.replaceWith(next);
+        } else {
+            updateContent({ snap, silent: true });
+        }
     }
 
     // ─── Core refresh ───
-    async function refreshData() {
+    /**
+     * @param {boolean} forceWeekly - force re-fetch GetGrokCreditsConfig
+     * @param {{ silent?: boolean }} opts - silent=true never shows loading blank
+     */
+    async function refreshData(forceWeekly, opts) {
+        const silent = !!(opts && opts.silent) || hasRenderedContent;
         const p = getPanel();
-        if (!p) return;
+        if (!p || isRefreshing) return;
+        isRefreshing = true;
+        setRefreshSpinning(true);
+
         const body = p.querySelector('.pbody');
-        if (body) body.innerHTML = `<div class="loading">${L.loading}</div>`;
+        // Only show loading on first paint when we have nothing to display
+        if (!silent && body && !hasRenderedContent) {
+            body.innerHTML = `<div class="loading">${L.loading}</div>`;
+        }
+
         try {
+            const rawWeekly = await fetchWeeklyUsage(!!forceWeekly);
+            const usage = normalizeWeeklyForUi(rawWeekly);
             const sub = detectSubscription();
             updateBadge(sub);
-            let usage = await fetchSubscriptionUsage();
-            if (!usage) usage = getPointsUsage();
-            const data = await fetchAllQuotas(sub);
-            data.usage = usage;
-            updateContent(data);
+            const snap = getModelSnapshot();
+            updateContent({ usage, sub, snap, timestamp: Date.now(), silent: true });
         } catch {
-            const b = getPanel()?.querySelector('.pbody');
-            if (b) b.innerHTML = `<div class="loading" style="color:var(--danger)">${L.refreshFail}</div>`;
+            if (!hasRenderedContent) {
+                const b = getPanel()?.querySelector('.pbody');
+                if (b) b.innerHTML = `<div class="loading" style="color:var(--danger)">${L.refreshFail}</div>`;
+            }
+            // Keep previous content if silent / already rendered
+        } finally {
+            isRefreshing = false;
+            setRefreshSpinning(false);
         }
     }
 
     // ─── Polling & event management ───
     function startPolling() {
         stopPolling();
+        // Weekly usage network poll (5 min), always silent
         pollInterval = setInterval(() => {
             if (document.visibilityState === 'visible' && getPanel()) {
-                refreshData();
+                refreshData(false, { silent: true });
             }
-        }, REFRESH_MS);
+        }, WEEKLY_REFRESH_MS);
+        // Local model chips — no network
+        modelPollInterval = setInterval(() => {
+            if (document.visibilityState === 'visible' && getPanel()) {
+                syncModelChips();
+            }
+        }, MODEL_POLL_MS);
     }
 
     function stopPolling() {
         if (pollInterval) {
             clearInterval(pollInterval);
             pollInterval = null;
+        }
+        if (modelPollInterval) {
+            clearInterval(modelPollInterval);
+            modelPollInterval = null;
         }
     }
 
@@ -809,15 +769,10 @@
         queryBarElement = qb;
 
         const debouncedModelCheck = debounce(() => {
-            const newModel = getCurrentModelName(qb);
-            if (newModel !== lastModelName) {
-                // Model changed — immediate refresh
-                refreshData();
-            }
-        }, 300);
+            syncModelChips();
+        }, 200);
 
         queryBarObserver = new MutationObserver((mutations) => {
-            // Check if model might have changed
             for (const mut of mutations) {
                 if (mut.type === 'childList' || mut.type === 'characterData' ||
                     (mut.type === 'attributes' && (mut.attributeName === 'aria-label' || mut.attributeName === 'aria-pressed'))) {
@@ -828,18 +783,18 @@
         });
         queryBarObserver.observe(qb, { childList: true, subtree: true, attributes: true, characterData: true });
 
-        // Submit detection
+        // After send: quietly refresh weekly usage (usage may tick up)
+        const scheduleSoftUsageRefresh = () => {
+            setTimeout(() => refreshData(true, { silent: true }), 4000);
+        };
+
         const inputEl = qb.querySelector('div[contenteditable="true"]');
         if (inputEl) {
             inputEl.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    // Wait 3s for rate limit to update after submission
-                    setTimeout(() => refreshData(), 3000);
-                }
+                if (e.key === 'Enter' && !e.shiftKey) scheduleSoftUsageRefresh();
             });
         }
 
-        // Submit button click detection
         const bottomBar = qb.querySelector('div.absolute.inset-x-0.bottom-0');
         const submitBtn = bottomBar
             ? Array.from(bottomBar.querySelectorAll('button')).find(b => {
@@ -851,9 +806,7 @@
             : null;
 
         if (submitBtn) {
-            submitBtn.addEventListener('click', () => {
-                setTimeout(() => refreshData(), 3000);
-            });
+            submitBtn.addEventListener('click', scheduleSoftUsageRefresh);
         }
     }
 
@@ -864,13 +817,11 @@
         domObserver = new MutationObserver(() => {
             const qb = getQueryBar();
             if (qb && qb !== queryBarElement) {
-                // New query bar appeared
                 queryBarElement = qb;
                 setupQueryBarObserver();
-                refreshData();
+                syncModelChips();
                 startPolling();
             } else if (!qb && queryBarElement) {
-                // Query bar removed
                 queryBarElement = null;
                 if (queryBarObserver) { queryBarObserver.disconnect(); queryBarObserver = null; }
                 stopPolling();
@@ -891,10 +842,11 @@
     function setupVisibilityHandler() {
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && getPanel()) {
-                refreshData();    // immediate refresh on return
-                startPolling();   // resume polling
+                refreshData(false, { silent: true });
+                syncModelChips();
+                startPolling();
             } else {
-                stopPolling();    // pause when hidden
+                stopPolling();
             }
         });
     }
@@ -949,7 +901,7 @@
             <div class="pfooter"></div>`;
         document.body.appendChild(panel);
 
-        panel.querySelector('#gqp-refresh').onclick = refreshData;
+        panel.querySelector('#gqp-refresh').onclick = () => refreshData(true, { silent: true });
         panel.querySelector('#gqp-theme').onclick = () => {
             cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
             applyTheme();
@@ -984,38 +936,58 @@
 
     // ─── Styles ───
     GM_addStyle(`
-        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;--active:#60a5fa;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:260px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;user-select:none}
+        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;--active:#60a5fa;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:268px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;user-select:none}
         #${PANEL_ID}.light{--bg:#fff;--bg2:#fafafa;--bg3:#f4f4f5;--border:#e4e4e7;--text:#18181b;--sub:#52525b;--hint:#a1a1aa;--ok:#16a34a;--warn:#ea580c;--danger:#dc2626;--active:#2563eb}
         #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:9px 12px 8px;background:var(--bg2);border-bottom:1px solid var(--border)}
         #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.92}
         #${PANEL_ID} .hbtns{display:flex;gap:2px}
         #${PANEL_ID} button{background:transparent;color:var(--sub);border:none;padding:3px 7px;border-radius:6px;font-size:13px;cursor:pointer}
         #${PANEL_ID} button:hover{background:var(--bg3);color:var(--text)}
-        #${PANEL_ID} .pbody{padding:10px 12px 6px}
+        #${PANEL_ID} button:disabled{opacity:.55;cursor:default}
+        #${PANEL_ID} #gqp-refresh.gqp-spin{animation:gqp-spin 0.8s linear infinite}
+        @keyframes gqp-spin{to{transform:rotate(360deg)}}
+        #${PANEL_ID} .pbody{padding:10px 12px 8px}
         #${PANEL_ID} .loading{padding:10px 2px;color:var(--hint);font-size:12.5px}
-        .gqp-section{margin-bottom:8px}
-        .gqp-sec-title{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--hint);margin-bottom:5px;padding-left:1px}
-        .gqp-row{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:3px;background:var(--bg3);border-radius:8px;transition:background .2s}
-        .gqp-row.gqp-row-active{background:var(--bg2);border:1px solid var(--active);padding:5px 9px}
-        .gqp-name{font-size:12.5px;font-weight:500;color:var(--sub)}
-        .gqp-num{display:flex;align-items:baseline;gap:4px}
-        .gqp-val{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:14px;font-weight:700;line-height:1}
-        .gqp-val.c-ok{color:var(--ok)}.gqp-val.c-warn{color:var(--warn)}.gqp-val.c-danger{color:var(--danger)}
-        .gqp-total{font-size:10.5px;color:var(--hint);font-family:ui-monospace,Menlo,monospace}
-        .gqp-hint{font-size:10.5px;color:var(--hint);font-style:italic}
-        .gqp-active-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--active);margin-right:5px;vertical-align:middle;flex-shrink:0;animation:gqp-pulse 2s ease-in-out infinite}
-        @keyframes gqp-pulse{0%,100%{opacity:1}50%{opacity:.4}}
-        #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
-        #${PANEL_ID} .fver{opacity:.45}
-        .c-ok{color:var(--ok)}
-        .c-danger{color:var(--danger)}
-        #${PANEL_ID} .gqp-progress{height:5px;background:var(--bg3);border-radius:999px;overflow:hidden;margin:2px 0 1px}
-        #${PANEL_ID} .gqp-bar{height:100%;background:var(--ok);transition:width .25s ease}
+        #${PANEL_ID} .gqp-section{margin-bottom:10px}
+        #${PANEL_ID} .gqp-section:last-child{margin-bottom:2px}
+        #${PANEL_ID} .gqp-sec-title{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--hint);margin-bottom:6px;padding-left:1px}
+        #${PANEL_ID} .gqp-hint{font-size:10.5px;color:var(--hint);font-style:italic}
+        #${PANEL_ID} .c-ok{color:var(--ok)} #${PANEL_ID} .c-warn{color:var(--warn)} #${PANEL_ID} .c-danger{color:var(--danger)}
+
+        /* Weekly usage */
+        #${PANEL_ID} .gqp-usage-card{background:var(--bg3);border-radius:10px;padding:10px 12px}
+        #${PANEL_ID} .gqp-usage-hero{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+        #${PANEL_ID} .gqp-usage-big{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:28px;font-weight:700;line-height:1;letter-spacing:-0.02em}
+        #${PANEL_ID} .gqp-usage-unit{font-size:14px;font-weight:600;margin-left:1px;opacity:.85}
+        #${PANEL_ID} .gqp-usage-hero-label{font-size:12px;font-weight:600;color:var(--text)}
+        #${PANEL_ID} .gqp-usage-hero-sub{font-size:11px;color:var(--hint);margin-top:2px}
+        #${PANEL_ID} .gqp-progress{height:5px;background:var(--bg);border-radius:999px;overflow:hidden}
+        #${PANEL_ID} .gqp-progress-lg{height:7px}
+        #${PANEL_ID} .gqp-bar{height:100%;background:var(--ok);transition:width .35s ease}
         #${PANEL_ID} .gqp-bar.c-warn{background:var(--warn)}
         #${PANEL_ID} .gqp-bar.c-danger{background:var(--danger)}
-        #${PANEL_ID} .gqp-usage-row .gqp-name{font-size:12px}
-        #${PANEL_ID} .gqp-usage-text{font-size:10.5px;color:var(--hint)}
-        .gqp-countdown{font-variant-numeric:tabular-nums}
+        #${PANEL_ID} .gqp-product-bar{display:flex;height:4px;width:100%;border-radius:999px;overflow:hidden;margin-top:7px;background:var(--bg)}
+        #${PANEL_ID} .gqp-product-seg{height:100%;min-width:2px}
+        #${PANEL_ID} .gqp-products{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:8px}
+        #${PANEL_ID} .gqp-product-item{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--hint);min-width:0}
+        #${PANEL_ID} .gqp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+        #${PANEL_ID} .gqp-product-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #${PANEL_ID} .gqp-product-pct{margin-left:auto;font-weight:600;color:var(--sub);font-variant-numeric:tabular-nums}
+        #${PANEL_ID} .gqp-reset-line{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid var(--border);font-size:10.5px;color:var(--hint)}
+        #${PANEL_ID} .gqp-reset-eta{color:var(--sub);font-weight:500;white-space:nowrap}
+
+        /* Model chips (horizontal) */
+        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+        #${PANEL_ID} .gqp-chip{text-align:center;padding:7px 2px;border-radius:8px;font-size:11.5px;font-weight:500;color:var(--hint);background:var(--bg3);border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
+        #${PANEL_ID} .gqp-chip-on{color:var(--text);background:rgba(96,165,250,.12);border-color:var(--active);font-weight:650;box-shadow:0 0 0 1px rgba(96,165,250,.15)}
+        #${PANEL_ID}.light .gqp-chip-on{background:rgba(37,99,235,.08)}
+        #${PANEL_ID} .gqp-chip-locked{opacity:.38}
+        #${PANEL_ID} .gqp-model-detail{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;padding:0 2px;font-size:10.5px;color:var(--hint)}
+        #${PANEL_ID} .gqp-model-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #${PANEL_ID} .gqp-model-rk{flex-shrink:0;padding:1px 7px;border-radius:999px;background:var(--bg3);color:var(--sub);font-weight:500}
+
+        #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
+        #${PANEL_ID} .fver{opacity:.45}
     `);
 
     if (document.readyState === 'loading') {
