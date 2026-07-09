@@ -1,79 +1,70 @@
 # Grok Quota Display Pro
 
-A clean Tampermonkey / Violentmonkey userscript that shows **real-time Grok quotas** in an interactive floating panel on [grok.com](https://grok.com).
+A clean Tampermonkey / Violentmonkey userscript that shows **Grok SuperGrok weekly usage** and the **current model** in an interactive floating panel on [grok.com](https://grok.com).
 
-[![Version](https://img.shields.io/badge/version-2.4.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-2.5.0-blue)](.)
 [![Language](https://img.shields.io/badge/language-Bilingual-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-**Upstream**: https://github.com/BExhei/Grok-Quota-Display-Pro
+**Upstream**: https://github.com/BExhei/Grok-Quota-Display-Pro  
 **Greasy Fork**: https://greasyfork.org/scripts/578827-grok-quota-display-pro
 
 ---
 
-## What's New (v2.4.0)
+## What's New (v2.5.0)
 
-- **Auto model detection & Auto row**
-  - Reads the model selector button in real time — no more hardcoded model names
-  - New **Auto** row always visible, shows low-effort quota as primary with high-effort as secondary
-  - Current model row highlighted with blue border + pulsing dot
+Adapted to Grok’s **weekly SuperGrok usage** system (replacing the old free-points + short-term rate-limit panel focus).
 
-- **requestKind awareness for grok-3**
-  - Detects Think / DeepSearch / DeeperSearch button states
-  - Sends the correct `requestKind` (`REASONING`, `DEEPSEARCH`, `DEEPERSEARCH`) instead of always `DEFAULT`
-  - Yields accurate quota readings for each mode
-
-- **Faster & smarter refresh**
-  - 30-second polling (down from 60s), pauses when tab is hidden
-  - Immediate refresh on: model switch, message submission (Enter key or send button click)
-  - Live countdown timer when any model reaches 0 remaining queries
-
-- **Usage total limit** unchanged
-  - Progress bar for SuperGrok free points (随 SuperGrok 附赠的免费积分)
-  - Percentage used, color-coded bar, and reset date
-  - Fetched via API probing + early `fetch` interception + DOM scan
-
-- Imagine quotas removed (API disabled by xAI)
-- Bilingual UI, membership-aware Heavy row, draggable panel unchanged
+- **Weekly usage (primary)**
+  - Reads `GetGrokCreditsConfig` (grpc-web / protobuf), same approach as current working rate-limit tools
+  - Large **remaining %**, used %, color progress bar
+  - Product breakdown (Chat / Imagine / API / Voice / …)
+  - Reset time + relative countdown (e.g. `2d 5h` / `2天5小时后`)
+- **Current model (horizontal chips)**
+  - Auto · Fast · Expert · Heavy in one row
+  - Active chip highlighted; Heavy dimmed when not available
+  - Detail line with friendly model name + Think / DeepSearch when active
+- **No more short-term rate-limit rows**
+  - Removed dependency on `POST /rest/rate-limits` for the main UI (obsolete for weekly quotas)
+- **Silent refresh (no flash)**
+  - First load may show “Loading…” once
+  - Background refresh updates in place; manual refresh only spins the ⟳ button
+  - Weekly network poll every **5 minutes** (aligned with similar tools)
+  - Local model chips sync ~1.5s + MutationObserver on the query bar
+  - After send: silent force-refresh of weekly usage ~4s later
+  - Intercepts page `GetGrokCreditsConfig` responses when Grok loads them
 
 ---
 
 ## Features
 
-### Real-time Quota Monitoring
-- **Auto**: grok-4-auto low-effort limit (primary) + high-effort quota (secondary)
-- **Chat quotas**: Fast, Expert, Heavy (remaining / total, with tier gating for Heavy)
-- **Usage total limit**: Progress bar + reset info for SuperGrok bundled free points
+### Weekly usage
 
-### Smart Model Detection
-- Reads the Grok model selector button directly (SVG path + text matching)
-- Maps UI labels to correct internal model names (`grok-4.3`, `grok-3`, `grok-4-heavy`, etc.)
-- Automatically detects grok-3 Think / DeepSearch modes for precise requestKind
+- SuperGrok weekly **usage % / remaining %**
+- Segmented bar + list for product categories
+- Reset timestamp and time-until-reset
+- Requires SuperGrok-tier access for meaningful weekly data
 
-### Smart Subscription Detection
-- Detects: Guest, Logged in, Premium+, **SuperGrok**, **SuperGrok Heavy**
-- Color-coded badge at the top of the panel
-- Non-Heavy users see **"Heavy subscribers only"** instead of misleading Heavy numbers
+### Current model indicator
 
-### Interactive Floating Panel
-- Bottom-right by default, fully **draggable**
-- Header controls:
-  - ⟳ Manual refresh
-  - ☀️ / 🌙 Theme toggle (dark / light, persisted in `localStorage`)
-  - − / + Minimize / expand
-- Current model row highlighted with blue border + pulsing blue dot
+- Horizontal chips: **Auto / Fast / Expert / Heavy**
+- Detects selector UI (text + SVG paths; `Model select` / `模型选择`)
+- Maps labels to internal names (`grok-4-auto`, `grok-3`, `grok-4`, `grok-4-heavy`, Grok 4.20 / 4.3, …)
+- Optional Think / DeepSearch / DeeperSearch badge on Fast-related modes
 
-### Visual & Bilingual
-- Color-coded values (green → orange → red)
-- `remaining / total` where the API provides totals
-- Live countdown timer (HH:MM:SS) when quota hits 0
-- **Chinese / English** UI (auto-detected from `navigator.language`)
+### Subscription badge
 
-### Smart Refresh & Performance
-- Auto-refresh every **30 seconds** while the tab is visible (pauses when hidden)
-- Instant refresh on model switch or message submission
-- Usage data captured via network interception when Grok loads it
-- 8-second fetch timeout with `AbortController` for all API calls
+- Guest, Logged in, Premium+, **SuperGrok**, **SuperGrok Heavy**
+- Color-coded header badge
+- Heavy chip locked for non-Heavy accounts
+
+### Interactive panel
+
+- Bottom-right by default, **draggable** header
+- ⟳ Manual refresh (force weekly API, silent)
+- ☀️ / 🌙 Theme (dark / light, `localStorage`)
+- − / + Minimize
+- **Chinese / English** UI from `navigator.language`
 
 ---
 
@@ -94,39 +85,52 @@ Visit https://grok.com while logged in — the panel appears automatically.
 ## Usage
 
 1. Open [grok.com](https://grok.com).
-2. Find the floating panel in the bottom-right.
+2. Floating panel appears bottom-right.
 3. Badge shows your tier (e.g. **SuperGrok**).
-4. **Usage total limit** — progress bar when data is available.
-5. **Chat quotas** — Auto / Fast / Expert / Heavy; current model highlighted.
-6. Heavy locked for non-Heavy accounts.
-7. Use header buttons to refresh, switch theme, or minimize.
-8. Drag the header to reposition the panel.
+4. **Weekly usage** — remaining %, breakdown, reset time.
+5. **Current model** — which of Auto / Fast / Expert / Heavy is selected.
+6. Use header buttons to refresh, switch theme, or minimize.
+7. Drag the header to reposition.
 
-**Tip**: If usage total limit is empty, open **Settings → Usage** once — the panel updates immediately and caches data for the session.
+**Tip**: If weekly usage is empty, confirm you are on SuperGrok and try ⟳, or open **Settings → Usage** so Grok may load credits config (also intercepted).
 
 ---
 
 ## Technical Notes
 
-### Model Detection
-- Reads the model selector button's SVG path data and text spans
-- Maps UI labels → internal model names via `MODEL_MAP`
-- Detects Think/DeepSearch via `aria-pressed` attributes on query-bar buttons
+### Weekly usage API
 
-### Grok REST Endpoints
-- `POST /rest/rate-limits` — polled every 30s for chat quotas with correct `modelName` + `requestKind`
-- Probing `/rest/subscriptions`, `/rest/user`, `/rest/usage` for usage total limit
-- **Deprecated**: `POST /rest/media/imagine/quota_info` — not used; endpoint disabled by xAI
+- `POST /grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig`  
+  Headers: `content-type: application/grpc-web+proto`, `x-grpc-web: 1`  
+  Body: empty protobuf frame  
+- Response parsed for `usagePercent`, `productUsage[]`, `currentPeriod.start/end`
+- Optional `fetch` intercept when the site loads the same endpoint
 
-### Refresh Strategy
-- 30s interval polling (force-fetch every time) — pauses when tab hidden
-- Event-driven: model change → immediate refresh; message send → refresh after 3s
-- `MutationObserver` on query bar for model/Think/DeepSearch changes (300ms debounce)
-- `fetch` interception only for SuperGrok points usage — rate limits are polled directly
+### Model detection
 
-### Tier Detection
-- Via page/header text scanning for SuperGrok, Premium+, etc.
-- UI injected client-side with `GM_addStyle` — no external servers or tracking
+- Query bar `.query-bar` + model button (`Model select` / `模型选择`)
+- `MODEL_MAP` + SVG path heuristics
+- Think / DeepSearch via `aria-pressed` (where available)
+
+### Refresh strategy
+
+| Trigger | Behavior |
+|--------|----------|
+| First open | Load weekly usage once (may show loading) |
+| Every 5 min | Silent weekly refresh if tab visible |
+| Model change | Local chip update only (no network) |
+| After send | Silent force weekly refresh ~4s later |
+| Manual ⟳ | Force weekly refresh; button spins |
+| Tab hidden | Polling paused |
+
+- 8s fetch timeout with `AbortController`
+- UI injected with `GM_addStyle` — no third-party servers
+
+### Deprecated / removed (v2.5)
+
+- Primary UI no longer uses `POST /rest/rate-limits` remaining counts
+- Old SuperGrok “free points” text scraping as the main usage source
+- Imagine quota endpoint still unused (disabled by xAI)
 
 ---
 
@@ -138,4 +142,4 @@ Single source file: `grok-quota-display-pro.js`
 
 ## License
 
-GPL-3.0 — based on [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota-Display-Pro)
+GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota-Display-Pro)
