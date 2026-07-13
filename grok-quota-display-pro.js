@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.6.0
-// @description Grok weekly SuperGrok usage + current model chips; silent refresh, Grok-native UI
+// @version 2.6.1
+// @description Grok weekly usage + model chips for Free / SuperGrok / SuperGrok Heavy; silent refresh
 // @run-at       document-start
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
@@ -135,7 +135,7 @@
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '2.6.0';
+    const VERSION = '2.6.1';
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
@@ -171,15 +171,23 @@
         auto: LANG === 'zh' ? '自动' : 'Auto',
         heavy: LANG === 'zh' ? '重度' : 'Heavy',
         usageTitle: LANG === 'zh' ? '每周用量' : 'Weekly usage',
-        usageEmpty: LANG === 'zh' ? '暂无周用量数据（需 SuperGrok）' : 'No weekly usage (SuperGrok required)',
+        usageEmpty: LANG === 'zh' ? '暂无周用量数据' : 'No weekly usage data',
+        usageGuest: LANG === 'zh' ? '登录后可查看每周用量' : 'Sign in to view weekly usage',
+        usageFree: LANG === 'zh'
+            ? '免费账户无每周共享额度 · SuperGrok / Heavy 可用'
+            : 'No weekly pool on Free · available with SuperGrok / Heavy',
+        usageEmptyPaid: LANG === 'zh'
+            ? '暂无周用量数据，可点 ⟳ 重试或打开设置 → 用量'
+            : 'No data yet — tap ⟳ or open Settings → Usage',
         usedLabel: LANG === 'zh' ? '已用' : 'used',
         remainLabel: LANG === 'zh' ? '剩余' : 'left',
         lastUpdate: LANG === 'zh' ? '更新' : 'Updated',
         loading: LANG === 'zh' ? '加载中…' : 'Loading…',
         refreshFail: LANG === 'zh' ? '加载失败' : 'Load failed',
         guest: LANG === 'zh' ? '游客' : 'Guest',
+        free: LANG === 'zh' ? '免费' : 'Free',
         loggedIn: LANG === 'zh' ? '已登录' : 'Logged in',
-        unlockHeavy: LANG === 'zh' ? '需 Heavy' : 'Heavy only',
+        unlockHeavy: LANG === 'zh' ? '需 SuperGrok Heavy' : 'SuperGrok Heavy only',
         resetLabel: LANG === 'zh' ? '重置' : 'Resets',
         active: LANG === 'zh' ? '当前' : 'Active',
         noProducts: LANG === 'zh' ? '暂无分类明细' : 'No category breakdown',
@@ -188,6 +196,19 @@
         deeperSearch: 'DeeperSearch',
         unknownModel: LANG === 'zh' ? '未知' : 'Unknown',
     };
+
+    /** Tier ids: guest | free | premium | super | heavy */
+    const TIER = {
+        guest:  { id: 'guest',   tier: () => L.guest,           color: '#6b7280', canUseHeavy: false, hasWeeklyPool: false },
+        free:   { id: 'free',    tier: () => L.free,            color: '#4b5563', canUseHeavy: false, hasWeeklyPool: false },
+        premium:{ id: 'premium', tier: () => 'Premium+',        color: '#1d4ed8', canUseHeavy: false, hasWeeklyPool: false },
+        super:  { id: 'super',   tier: () => 'SuperGrok',       color: '#047857', canUseHeavy: false, hasWeeklyPool: true },
+        heavy:  { id: 'heavy',   tier: () => 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true,  hasWeeklyPool: true },
+    };
+    function makeTier(key) {
+        const t = TIER[key] || TIER.free;
+        return { id: t.id, tier: typeof t.tier === 'function' ? t.tier() : t.tier, color: t.color, canUseHeavy: t.canUseHeavy, hasWeeklyPool: t.hasWeeklyPool };
+    }
 
     const cfg = {
         get theme() { return localStorage.getItem('grokQuotaTheme') || 'dark'; },
@@ -404,41 +425,63 @@
         };
     } catch (e) { /* ignore */ }
 
-    // ─── Subscription detection ───
+    // ─── Subscription detection (Free / SuperGrok / SuperGrok Heavy) ───
+    function pageTextBundle() {
+        const fullText = (document.body?.innerText || '').toLowerCase();
+        const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
+        const headerText = headerEl ? headerEl.innerText.toLowerCase() : '';
+        return { fullText, headerText, blob: headerText + '\n' + fullText };
+    }
+
+    function isLikelyGuest() {
+        try {
+            const loginBtn = document.querySelector(
+                'a[href*="login"], a[href*="sign-in"], button[aria-label*="sign in" i], button[aria-label*="log in" i], [data-testid*="login"]'
+            );
+            if (!loginBtn) return false;
+            const { blob } = pageTextBundle();
+            // Logged-in Free still has no SuperGrok string; guest usually has sign-in CTA
+            if (/supergrok|sign\s*out|log\s*out|账户|退出/.test(blob)) return false;
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     function detectSubscription() {
         try {
-            // If weekly credits API already returned data, treat as SuperGrok-tier
+            const { fullText, headerText, blob } = pageTextBundle();
+            const isHeavy = /supergrok\s*heavy|grok\s*heavy/.test(blob)
+                || (headerText.includes('heavy') && fullText.includes('supergrok'));
+            const isSuper = /\bsupergrok\b/.test(blob);
+
+            // Highest tier first
+            if (isHeavy) return makeTier('heavy');
+            if (isSuper) return makeTier('super');
+
+            // Weekly pool API only returns meaningful data for paid weekly plans
             if (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number') {
-                const fullText = (document.body?.innerText || '').toLowerCase();
-                const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
-                const headerText = headerEl ? headerEl.innerText.toLowerCase() : '';
-                const isHeavy = headerText.includes('supergrok heavy') || headerText.includes('grok heavy')
-                    || (fullText.includes('supergrok heavy') && headerText.includes('heavy'));
-                if (isHeavy) return { tier: 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true };
-                return { tier: 'SuperGrok', color: '#047857', canUseHeavy: false };
+                // DOM may lag; still prefer SuperGrok over Free when pool exists
+                return makeTier('super');
             }
-            const fullText = (document.body?.innerText || '').toLowerCase();
-            const loginBtn = document.querySelector('a[href*="login"], button[aria-label*="sign" i], [data-testid*="login"]');
-            if (loginBtn && !fullText.includes('supergrok')) {
-                return { tier: L.guest, color: '#6b7280', canUseHeavy: false };
-            }
-            const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
-            const headerText = headerEl ? headerEl.innerText.toLowerCase() : '';
-            const isHeavy = (headerText.includes('supergrok heavy') || headerText.includes('grok heavy')) ||
-                            (fullText.includes('supergrok heavy') && headerText.includes('heavy'));
-            if (isHeavy) {
-                return { tier: 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true };
-            }
-            if (fullText.includes('supergrok')) {
-                return { tier: 'SuperGrok', color: '#047857', canUseHeavy: false };
-            }
+
             if (fullText.includes('premium+') || fullText.includes('premium plus')) {
-                return { tier: 'Premium+', color: '#1d4ed8', canUseHeavy: false };
+                return makeTier('premium');
             }
-            return { tier: L.loggedIn, color: '#4b5563', canUseHeavy: false };
+            if (isLikelyGuest()) return makeTier('guest');
+            // Default: free logged-in (or unknown)
+            return makeTier('free');
         } catch {
-            return { tier: L.loggedIn, color: '#4b5563', canUseHeavy: false };
+            return makeTier('free');
         }
+    }
+
+    function usageEmptyHint(sub) {
+        const s = sub || lastSub || detectSubscription();
+        if (s.id === 'guest') return L.usageGuest;
+        if (s.id === 'free' || s.id === 'premium') return L.usageFree;
+        if (s.hasWeeklyPool) return L.usageEmptyPaid;
+        return L.usageEmpty;
     }
 
     // ─── Weekly usage fetch ───
@@ -596,10 +639,14 @@
     }
 
     // ─── UI builders ───
-    function buildUsageSection(usage) {
+    function buildUsageSection(usage, sub) {
         let html = `<div class="gqp-section gqp-usage-sec"><div class="gqp-sec-title">${L.usageTitle}</div>`;
         if (!usage || typeof usage.percent !== 'number') {
-            return html + `<div class="gqp-hint" style="padding:6px 2px">${L.usageEmpty}</div></div>`;
+            // Free / guest: soft empty card; paid: retry hint
+            html += `<div class="gqp-usage-card gqp-usage-empty">`;
+            html += `<div class="gqp-hint" style="padding:2px 0;font-style:normal;line-height:1.45">${usageEmptyHint(sub)}</div>`;
+            html += `</div></div>`;
+            return html;
         }
         const pct = usage.percent;
         const remaining = usage.remaining != null ? usage.remaining : Math.max(0, 100 - pct);
@@ -759,7 +806,7 @@
         const m = snap || getModelSnapshot();
 
         // In-place render — never flash a blank loading screen when content exists
-        body.innerHTML = buildUsageSection(u) + buildModelSection(m, s);
+        body.innerHTML = buildUsageSection(u, s) + buildModelSection(m, s);
         hasRenderedContent = true;
         if (timestamp) updateFooter(timestamp);
         else if (!silent) updateFooter(Date.now());
@@ -834,14 +881,18 @@
 
             if (usage) {
                 clearStartupRetry();
+                bootstrapDone = true;
                 updateContent({ usage, sub, snap, timestamp: Date.now(), silent: true });
             } else if (hasRenderedContent) {
                 // Keep previous good UI; only refresh model chips / badge
                 updateContent({ sub, snap, silent: true });
             } else {
-                // First open still empty: soft empty (not hard "failed") + late retry
+                // Soft empty by tier: Free/Guest stop retrying; paid can late-retry once
                 updateContent({ usage: null, sub, snap, timestamp: Date.now(), silent: true });
-                if (!startupRetryTimer) {
+                if (!sub.hasWeeklyPool) {
+                    bootstrapDone = true;
+                    clearStartupRetry();
+                } else if (!startupRetryTimer && !bootstrapDone) {
                     startupRetryTimer = setTimeout(() => {
                         startupRetryTimer = null;
                         if (!bootstrapDone) {
@@ -854,9 +905,13 @@
             console.warn('[GrokQuotaPro] refreshData error:', e);
             // Avoid permanent "加载失败" after a single early miss
             if (!hasRenderedContent) {
-                const b = getPanel()?.querySelector('.pbody');
-                if (b) b.innerHTML = `<div class="loading">${L.loading}</div>`;
-                if (!startupRetryTimer) {
+                const sub = detectSubscription();
+                const snap = getModelSnapshot();
+                updateContent({ usage: null, sub, snap, timestamp: Date.now(), silent: true });
+                if (!sub.hasWeeklyPool) {
+                    bootstrapDone = true;
+                    clearStartupRetry();
+                } else if (!startupRetryTimer) {
                     startupRetryTimer = setTimeout(() => {
                         startupRetryTimer = null;
                         refreshData(true, { silent: true, bootstrap: true });
