@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.5.0
-// @description Grok quota monitor — weekly usage + current model indicator; silent refresh, no flash
+// @version 2.6.0
+// @description Grok weekly SuperGrok usage + current model chips; silent refresh, Grok-native UI
 // @run-at       document-start
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
@@ -104,16 +104,18 @@
         let searchKind = null;
         for (const btn of buttons) {
             const aria = btn.getAttribute('aria-label') || '';
-            if (aria === 'Think' && btn.getAttribute('aria-pressed') === 'true') {
-                const path = btn.querySelector('path');
-                if (path) {
-                    const d = path.getAttribute('d') || '';
-                    if (d.includes('M19 9C19 12.866')) thinkPressed = true;
+            // EN + common ZH labels for Think / DeepSearch
+            if (btn.getAttribute('aria-pressed') === 'true') {
+                if (aria === 'Think' || aria === '思考') {
+                    const path = btn.querySelector('path');
+                    const d = path ? (path.getAttribute('d') || '') : '';
+                    // Prefer brain-icon path when present; aria match is enough for ZH UI
+                    if (!d || d.includes('M19 9C19 12.866') || aria === '思考') thinkPressed = true;
                 }
-            }
-            if (/Deep(?:er)?Search/i.test(aria) && btn.getAttribute('aria-pressed') === 'true') {
-                if (/deeper/i.test(aria)) searchKind = 'DEEPERSEARCH';
-                else if (/deep/i.test(aria)) searchKind = 'DEEPSEARCH';
+                if (/Deep(?:er)?Search/i.test(aria) || /深度搜索|更深搜索|深度研究/i.test(aria)) {
+                    if (/deeper|更深/i.test(aria)) searchKind = 'DEEPERSEARCH';
+                    else searchKind = 'DEEPSEARCH';
+                }
             }
         }
         if (thinkPressed) return 'REASONING';
@@ -129,12 +131,15 @@
     const PANEL_ID = 'grok-quota-pro';
     const WEEKLY_REFRESH_MS = 5 * 60 * 1000; // 5 min for weekly credits API
     const MODEL_POLL_MS = 1500;              // light local model-chip sync (no network)
-    const FETCH_TIMEOUT_MS = 8000;
-    const VERSION = '2.5.0';
+    const FETCH_TIMEOUT_MS = 10000;
+    // First open: page/session often not ready — wait + retry before giving up
+    const STARTUP_DELAY_MS = 1200;
+    const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
+    const VERSION = '2.6.0';
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
-    // Weekly product breakdown (same mapping as Grok Rate Limit Display)
+    // Weekly product breakdown (Grok Settings → Usage)
     const PRODUCT_NAMES = {
         0: LANG === 'zh' ? '第三方' : '3rd Party',
         1: 'API',
@@ -144,10 +149,13 @@
         5: 'Imagine',
         6: LANG === 'zh' ? '语音' : 'Voice',
     };
-    const PRODUCT_COLORS = {
-        0: '#6b7280', 1: '#3b82f6', 2: '#10b981', 3: '#f59e0b',
-        4: '#06b6d4', 5: '#a855f7', 6: '#ec4899',
-    };
+    // Official bar uses one electric blue with stepped opacity (see --fg-electric-blue)
+    // #1a5eff ≈ hsl(221 100% 55%)
+    const ELECTRIC_BLUE_HSL = '221 100% 55%';
+    const SEGMENT_OPACITIES = [1, 0.7, 0.45, 0.32, 0.22, 0.15, 0.1];
+    function electricBlue(alpha) {
+        return `hsl(${ELECTRIC_BLUE_HSL} / ${alpha})`;
+    }
 
     const MODEL_CHIPS = [
         { kind: 'auto', short: LANG === 'zh' ? '自动' : 'Auto' },
@@ -198,6 +206,8 @@
     let lastActiveCategory = null;
     let hasRenderedContent = false;
     let isRefreshing = false;
+    let bootstrapDone = false;       // first successful weekly read (or exhausted retries)
+    let startupRetryTimer = null;
     let pollInterval = null;
     let modelPollInterval = null;
     let domObserver = null;
@@ -320,9 +330,10 @@
         };
     }
 
-    async function fetchGrokCreditsConfig() {
+    async function fetchGrokCreditsConfig(maxAttempts) {
+        if (maxAttempts == null) maxAttempts = 1;
         const url = window.location.origin + '/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
-        const res = await fetchWithTimeout(url, {
+        const init = {
             method: 'POST',
             credentials: 'include',
             headers: {
@@ -331,9 +342,24 @@
                 'x-grpc-web': '1',
             },
             body: new Uint8Array([0, 0, 0, 0, 0]),
-        }, FETCH_TIMEOUT_MS);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return parseGrpcWebCreditsConfig(await res.arrayBuffer());
+        };
+        let lastErr = null;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const res = await fetchWithTimeout(url, init, FETCH_TIMEOUT_MS);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const parsed = parseGrpcWebCreditsConfig(await res.arrayBuffer());
+                if (parsed && typeof parsed.usagePercent === 'number') return parsed;
+                lastErr = new Error('empty or unparsable credits config');
+            } catch (e) {
+                lastErr = e;
+            }
+            if (attempt < maxAttempts) {
+                await new Promise(r => setTimeout(r, 350 * attempt));
+            }
+        }
+        if (lastErr) throw lastErr;
+        return null;
     }
 
     function formatPeriodReset(isoOrText) {
@@ -354,15 +380,17 @@
             const res = await __origFetch.apply(this, arguments);
             try {
                 const urlStr = typeof input === 'string' ? input : (input && input.url) || '';
-                if (typeof urlStr === 'string' && urlStr.includes('GetGrokCreditsConfig')) {
+                if (typeof urlStr === 'string' && urlStr.includes('GetGrokCreditsConfig') && res.ok) {
                     const buf = await res.clone().arrayBuffer().catch(() => null);
                     if (buf) {
                         const parsed = parseGrpcWebCreditsConfig(buf);
                         if (parsed && typeof parsed.usagePercent === 'number') {
                             cachedWeeklyUsage = { ...parsed, source: 'intercepted' };
                             lastWeeklyFetchAt = Date.now();
-                            // Quietly paint new weekly numbers if panel already shown
-                            if (hasRenderedContent && getPanel()) {
+                            bootstrapDone = true;
+                            clearStartupRetry();
+                            // Quietly paint as soon as panel exists (helps first-load race)
+                            if (getPanel()) {
                                 const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
                                 const sub = detectSubscription();
                                 updateBadge(sub);
@@ -389,7 +417,7 @@
                 if (isHeavy) return { tier: 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true };
                 return { tier: 'SuperGrok', color: '#047857', canUseHeavy: false };
             }
-            const fullText = document.body.innerText.toLowerCase();
+            const fullText = (document.body?.innerText || '').toLowerCase();
             const loginBtn = document.querySelector('a[href*="login"], button[aria-label*="sign" i], [data-testid*="login"]');
             if (loginBtn && !fullText.includes('supergrok')) {
                 return { tier: L.guest, color: '#6b7280', canUseHeavy: false };
@@ -428,18 +456,21 @@
      * Fetch SuperGrok weekly usage via GetGrokCreditsConfig.
      * Falls back to cache when within WEEKLY_REFRESH_MS.
      * force=true always re-fetches (manual refresh button).
+     * opts.attempts: HTTP/parse retries for cold start.
      */
-    async function fetchWeeklyUsage(force) {
+    async function fetchWeeklyUsage(force, opts) {
         const now = Date.now();
+        const attempts = (opts && opts.attempts) || 1;
         if (!force && cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number'
             && (now - lastWeeklyFetchAt) < WEEKLY_REFRESH_MS) {
             return cachedWeeklyUsage;
         }
         try {
-            const parsed = await fetchGrokCreditsConfig();
+            const parsed = await fetchGrokCreditsConfig(attempts);
             if (parsed && typeof parsed.usagePercent === 'number') {
                 cachedWeeklyUsage = { ...parsed, source: 'api' };
-                lastWeeklyFetchAt = now;
+                lastWeeklyFetchAt = Date.now();
+                bootstrapDone = true;
                 return cachedWeeklyUsage;
             }
         } catch (e) {
@@ -450,6 +481,57 @@
             return cachedWeeklyUsage;
         }
         return null;
+    }
+
+    function sleep(ms) {
+        return new Promise(r => setTimeout(r, ms));
+    }
+
+    function clearStartupRetry() {
+        if (startupRetryTimer) {
+            clearTimeout(startupRetryTimer);
+            startupRetryTimer = null;
+        }
+    }
+
+    /**
+     * Cold-start bootstrap: wait for page/session, retry GetGrokCreditsConfig
+     * several times. Keeps "Loading…" instead of flashing permanent failure.
+     */
+    async function bootstrapWeeklyUsage() {
+        if (bootstrapDone && cachedWeeklyUsage) return cachedWeeklyUsage;
+
+        // Let SPA + auth cookies settle (common cause of first-hit failure)
+        if (document.readyState !== 'complete') {
+            await new Promise(resolve => {
+                if (document.readyState === 'complete') return resolve();
+                window.addEventListener('load', resolve, { once: true });
+                // Fallback if load already fired or hangs
+                setTimeout(resolve, STARTUP_DELAY_MS);
+            });
+        }
+        await sleep(STARTUP_DELAY_MS);
+
+        for (let i = 0; i < STARTUP_RETRY_DELAYS_MS.length; i++) {
+            // Intercept / parallel refresh may have filled cache mid-bootstrap
+            if (bootstrapDone && cachedWeeklyUsage
+                && typeof cachedWeeklyUsage.usagePercent === 'number') {
+                return cachedWeeklyUsage;
+            }
+            if (i > 0) await sleep(STARTUP_RETRY_DELAYS_MS[i]);
+            // Keep loading hint visible during retries (do not paint empty/fail yet)
+            const body = getPanel()?.querySelector('.pbody');
+            if (body && !hasRenderedContent) {
+                body.innerHTML = `<div class="loading">${L.loading}</div>`;
+            }
+            const raw = await fetchWeeklyUsage(true, { attempts: 2 });
+            if (raw && typeof raw.usagePercent === 'number') {
+                return raw;
+            }
+        }
+        return (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number')
+            ? cachedWeeklyUsage
+            : null;
     }
 
     /** Normalize weekly usage for UI (percent + reset date string + products). */
@@ -525,7 +607,7 @@
         const remainHint = formatResetRemaining(usage.resetIso);
 
         html += `<div class="gqp-usage-card">`;
-        // Big remaining + used summary
+        // Big remaining + used summary (like Grok SuperGrok weekly limit header)
         html += `<div class="gqp-usage-hero">`;
         html += `<div class="gqp-usage-big ${cls}">${remaining}<span class="gqp-usage-unit">%</span></div>`;
         html += `<div class="gqp-usage-hero-meta">`;
@@ -533,27 +615,44 @@
         html += `<div class="gqp-usage-hero-sub">${pct}% ${L.usedLabel}</div>`;
         html += `</div></div>`;
 
-        // Progress (used portion)
-        html += `<div class="gqp-progress gqp-progress-lg"><div class="gqp-bar ${cls}" style="width:${pct}%"></div></div>`;
-
-        // Product breakdown
+        // Match Grok official usage bar DOM:
+        // flex h-5 w-full gap-px | segments width:% electric-blue / opacity | flex-1 remainder track
         const products = (usage.productUsage || []).filter(p => (p.usagePercent || 0) > 0)
             .sort((a, b) => (b.usagePercent || 0) - (a.usagePercent || 0));
+        const nSeg = products.length || (pct > 0 ? 1 : 0);
+        html += `<div class="gqp-progress" title="${pct}% ${L.usedLabel}">`;
         if (products.length > 0) {
-            html += `<div class="gqp-product-bar">`;
-            for (const p of products) {
-                const color = PRODUCT_COLORS[p.product] || '#6b7280';
+            products.forEach((p, i) => {
+                const alpha = SEGMENT_OPACITIES[Math.min(i, SEGMENT_OPACITIES.length - 1)];
                 const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
-                html += `<div class="gqp-product-seg" style="width:${p.usagePercent}%;background:${color}" title="${name}: ${p.usagePercent}%"></div>`;
-            }
-            html += `</div>`;
+                const isFirst = i === 0;
+                const isLastUsed = i === products.length - 1 && pct >= 100;
+                let rad = 'gqp-seg-mid';
+                if (isFirst && isLastUsed) rad = 'gqp-seg-only';
+                else if (isFirst) rad = 'gqp-seg-start';
+                else if (isLastUsed) rad = 'gqp-seg-end';
+                html += `<div class="gqp-product-seg ${rad}" style="width:${p.usagePercent}%;background-color:${electricBlue(alpha)}" title="${name}: ${p.usagePercent}%"></div>`;
+            });
+        } else if (pct > 0) {
+            const rad = pct >= 100 ? 'gqp-seg-only' : 'gqp-seg-start';
+            html += `<div class="gqp-product-seg ${rad}" style="width:${pct}%;background-color:${electricBlue(1)}"></div>`;
+        }
+        // Unused remainder (official: flex-1 bg-surface-l3 rounded-l-sm rounded-r-md)
+        if (pct < 100) {
+            const remRad = nSeg === 0 ? 'gqp-seg-only' : 'gqp-seg-rest';
+            html += `<div class="gqp-progress-rest ${remRad}"></div>`;
+        }
+        html += `</div>`;
+
+        if (products.length > 0) {
             html += `<div class="gqp-products">`;
-            for (const p of products) {
-                const color = PRODUCT_COLORS[p.product] || '#6b7280';
+            products.forEach((p, i) => {
+                const alpha = SEGMENT_OPACITIES[Math.min(i, SEGMENT_OPACITIES.length - 1)];
+                const color = electricBlue(alpha);
                 const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
                 html += `<div class="gqp-product-item"><span class="gqp-dot" style="background:${color}"></span>`;
                 html += `<span class="gqp-product-name">${name}</span><span class="gqp-product-pct">${p.usagePercent}%</span></div>`;
-            }
+            });
             html += `</div>`;
         } else if (pct > 0) {
             html += `<div class="gqp-hint" style="margin-top:6px">${L.noProducts}</div>`;
@@ -697,10 +796,13 @@
     // ─── Core refresh ───
     /**
      * @param {boolean} forceWeekly - force re-fetch GetGrokCreditsConfig
-     * @param {{ silent?: boolean }} opts - silent=true never shows loading blank
+     * @param {{ silent?: boolean, bootstrap?: boolean }} opts
+     *   silent    — never blank the panel (default once content exists)
+     *   bootstrap — cold-start wait + multi-retry (first open only)
      */
     async function refreshData(forceWeekly, opts) {
         const silent = !!(opts && opts.silent) || hasRenderedContent;
+        const useBootstrap = !!(opts && opts.bootstrap) && !bootstrapDone;
         const p = getPanel();
         if (!p || isRefreshing) return;
         isRefreshing = true;
@@ -708,23 +810,59 @@
 
         const body = p.querySelector('.pbody');
         // Only show loading on first paint when we have nothing to display
-        if (!silent && body && !hasRenderedContent) {
+        if ((!silent || useBootstrap) && body && !hasRenderedContent) {
             body.innerHTML = `<div class="loading">${L.loading}</div>`;
         }
 
         try {
-            const rawWeekly = await fetchWeeklyUsage(!!forceWeekly);
+            let rawWeekly;
+            if (useBootstrap) {
+                rawWeekly = await bootstrapWeeklyUsage();
+            } else {
+                rawWeekly = await fetchWeeklyUsage(!!forceWeekly, {
+                    attempts: forceWeekly ? 2 : 1,
+                });
+            }
+
+            // Intercept may have filled cache while we were waiting
+            if (!rawWeekly && cachedWeeklyUsage) rawWeekly = cachedWeeklyUsage;
+
             const usage = normalizeWeeklyForUi(rawWeekly);
             const sub = detectSubscription();
             updateBadge(sub);
             const snap = getModelSnapshot();
-            updateContent({ usage, sub, snap, timestamp: Date.now(), silent: true });
-        } catch {
+
+            if (usage) {
+                clearStartupRetry();
+                updateContent({ usage, sub, snap, timestamp: Date.now(), silent: true });
+            } else if (hasRenderedContent) {
+                // Keep previous good UI; only refresh model chips / badge
+                updateContent({ sub, snap, silent: true });
+            } else {
+                // First open still empty: soft empty (not hard "failed") + late retry
+                updateContent({ usage: null, sub, snap, timestamp: Date.now(), silent: true });
+                if (!startupRetryTimer) {
+                    startupRetryTimer = setTimeout(() => {
+                        startupRetryTimer = null;
+                        if (!bootstrapDone) {
+                            refreshData(true, { silent: true, bootstrap: true });
+                        }
+                    }, 8000);
+                }
+            }
+        } catch (e) {
+            console.warn('[GrokQuotaPro] refreshData error:', e);
+            // Avoid permanent "加载失败" after a single early miss
             if (!hasRenderedContent) {
                 const b = getPanel()?.querySelector('.pbody');
-                if (b) b.innerHTML = `<div class="loading" style="color:var(--danger)">${L.refreshFail}</div>`;
+                if (b) b.innerHTML = `<div class="loading">${L.loading}</div>`;
+                if (!startupRetryTimer) {
+                    startupRetryTimer = setTimeout(() => {
+                        startupRetryTimer = null;
+                        refreshData(true, { silent: true, bootstrap: true });
+                    }, 2500);
+                }
             }
-            // Keep previous content if silent / already rendered
         } finally {
             isRefreshing = false;
             setRefreshSpinning(false);
@@ -820,14 +958,17 @@
                 queryBarElement = qb;
                 setupQueryBarObserver();
                 syncModelChips();
-                startPolling();
+                // Ensure weekly poll is running (init may have started it already)
+                if (!pollInterval) startPolling();
             } else if (!qb && queryBarElement) {
                 queryBarElement = null;
                 if (queryBarObserver) { queryBarObserver.disconnect(); queryBarObserver = null; }
-                stopPolling();
+                // Keep weekly usage polling even without query bar
             }
         });
-        domObserver.observe(document.body, { childList: true, subtree: true });
+        if (document.body) {
+            domObserver.observe(document.body, { childList: true, subtree: true });
+        }
     }
 
     function debounce(func, delay) {
@@ -885,6 +1026,7 @@
     // ─── Panel creation ───
     function createPanel() {
         if (getPanel()) return;
+        if (!document.body) return;
         const sub = detectSubscription();
         const panel = document.createElement('div');
         panel.id = PANEL_ID;
@@ -920,73 +1062,112 @@
     function init() {
         if (getPanel()) return;
         createPanel();
+        if (!getPanel()) return; // body not ready yet
 
-        // Initial query bar check
+        // Weekly poll always on (does not require query bar)
+        startPolling();
+
+        // Query bar: model chips only
         const qb = getQueryBar();
         if (qb) {
             queryBarElement = qb;
             setupQueryBarObserver();
-            startPolling();
         }
 
         setupDomObserver();
         setupVisibilityHandler();
-        refreshData();
+
+        // First open: delayed multi-retry bootstrap (avoids early "load failed")
+        const body = getPanel()?.querySelector('.pbody');
+        if (body) body.innerHTML = `<div class="loading">${L.loading}</div>`;
+        refreshData(true, { bootstrap: true, silent: false });
     }
 
     // ─── Styles ───
     GM_addStyle(`
-        #${PANEL_ID}{--bg:#18181b;--bg2:#1c1c1f;--bg3:#27272a;--border:#3f3f46;--text:#e4e4e7;--sub:#a1a1aa;--hint:#71717a;--ok:#a3e635;--warn:#fb923c;--danger:#f87171;--active:#60a5fa;position:fixed;bottom:16px;right:16px;z-index:999999;font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;min-width:268px;max-width:300px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;user-select:none}
-        #${PANEL_ID}.light{--bg:#fff;--bg2:#fafafa;--bg3:#f4f4f5;--border:#e4e4e7;--text:#18181b;--sub:#52525b;--hint:#a1a1aa;--ok:#16a34a;--warn:#ea580c;--danger:#dc2626;--active:#2563eb}
-        #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:9px 12px 8px;background:var(--bg2);border-bottom:1px solid var(--border)}
-        #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.92}
+        /* Dark (default) — grok.com surface layers */
+        #${PANEL_ID}{
+            --bg:#0c0c0e;--bg2:#121214;--bg3:#1c1c1f;--border:#2a2a30;
+            --text:#f4f4f5;--sub:#a1a1aa;--hint:#71717a;
+            --track:#3f3f46;--ok:#4ade80;--warn:#fbbf24;--danger:#fb7185;--active:#e4e4e7;
+            /* usage card (dark elevated surface, not forced light) */
+            --card-bg:#26262b;--card-text:#f4f4f5;--card-sub:#a1a1aa;--card-hint:#8b8b93;
+            --card-track:#3f3f46;--card-line:#3f3f46;--card-pct:#d4d4d8;
+            --chip-bg:rgba(255,255,255,.04);--chip-border:rgba(255,255,255,.08);--chip-hover:rgba(255,255,255,.07);
+            --chip-on-bg:rgba(255,255,255,.1);--chip-on-text:#e4e4e7;--chip-on-border:rgba(255,255,255,.18);
+            position:fixed;bottom:16px;right:16px;z-index:999999;
+            font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;
+            min-width:268px;max-width:300px;background:var(--bg);color:var(--text);
+            border:1px solid var(--border);border-radius:16px;
+            box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.03);
+            overflow:hidden;user-select:none
+        }
+        /* Light — official #f2f2f2 card surface */
+        #${PANEL_ID}.light{
+            --bg:#ffffff;--bg2:#f7f7f8;--bg3:#efeff1;--border:#e4e4e7;
+            --text:#18181b;--sub:#52525b;--hint:#a1a1aa;
+            --track:#e5e5e5;--ok:#16a34a;--warn:#d97706;--danger:#e11d48;--active:#18181b;
+            --card-bg:#f2f2f2;--card-text:#0a0a0a;--card-sub:#525252;--card-hint:#737373;
+            --card-track:#e5e5e5;--card-line:#e5e5e5;--card-pct:#404040;
+            --chip-bg:#f2f2f2;--chip-border:#e8e8e8;--chip-hover:#ebebeb;
+            --chip-on-bg:#e8e8e8;--chip-on-text:#18181b;--chip-on-border:#d4d4d4;
+            box-shadow:0 12px 32px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.04)
+        }
+        #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 9px;background:var(--bg2);border-bottom:1px solid var(--border)}
+        #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.95}
         #${PANEL_ID} .hbtns{display:flex;gap:2px}
-        #${PANEL_ID} button{background:transparent;color:var(--sub);border:none;padding:3px 7px;border-radius:6px;font-size:13px;cursor:pointer}
+        #${PANEL_ID} button{background:transparent;color:var(--sub);border:none;padding:3px 7px;border-radius:8px;font-size:13px;cursor:pointer}
         #${PANEL_ID} button:hover{background:var(--bg3);color:var(--text)}
         #${PANEL_ID} button:disabled{opacity:.55;cursor:default}
         #${PANEL_ID} #gqp-refresh.gqp-spin{animation:gqp-spin 0.8s linear infinite}
         @keyframes gqp-spin{to{transform:rotate(360deg)}}
-        #${PANEL_ID} .pbody{padding:10px 12px 8px}
+        #${PANEL_ID} .pbody{padding:11px 12px 9px}
         #${PANEL_ID} .loading{padding:10px 2px;color:var(--hint);font-size:12.5px}
         #${PANEL_ID} .gqp-section{margin-bottom:10px}
         #${PANEL_ID} .gqp-section:last-child{margin-bottom:2px}
-        #${PANEL_ID} .gqp-sec-title{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--hint);margin-bottom:6px;padding-left:1px}
+        #${PANEL_ID} .gqp-sec-title{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:7px;padding-left:1px}
         #${PANEL_ID} .gqp-hint{font-size:10.5px;color:var(--hint);font-style:italic}
         #${PANEL_ID} .c-ok{color:var(--ok)} #${PANEL_ID} .c-warn{color:var(--warn)} #${PANEL_ID} .c-danger{color:var(--danger)}
 
-        /* Weekly usage */
-        #${PANEL_ID} .gqp-usage-card{background:var(--bg3);border-radius:10px;padding:10px 12px}
-        #${PANEL_ID} .gqp-usage-hero{display:flex;align-items:center;gap:12px;margin-bottom:8px}
-        #${PANEL_ID} .gqp-usage-big{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:28px;font-weight:700;line-height:1;letter-spacing:-0.02em}
-        #${PANEL_ID} .gqp-usage-unit{font-size:14px;font-weight:600;margin-left:1px;opacity:.85}
-        #${PANEL_ID} .gqp-usage-hero-label{font-size:12px;font-weight:600;color:var(--text)}
-        #${PANEL_ID} .gqp-usage-hero-sub{font-size:11px;color:var(--hint);margin-top:2px}
-        #${PANEL_ID} .gqp-progress{height:5px;background:var(--bg);border-radius:999px;overflow:hidden}
-        #${PANEL_ID} .gqp-progress-lg{height:7px}
-        #${PANEL_ID} .gqp-bar{height:100%;background:var(--ok);transition:width .35s ease}
-        #${PANEL_ID} .gqp-bar.c-warn{background:var(--warn)}
-        #${PANEL_ID} .gqp-bar.c-danger{background:var(--danger)}
-        #${PANEL_ID} .gqp-product-bar{display:flex;height:4px;width:100%;border-radius:999px;overflow:hidden;margin-top:7px;background:var(--bg)}
-        #${PANEL_ID} .gqp-product-seg{height:100%;min-width:2px}
-        #${PANEL_ID} .gqp-products{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-top:8px}
-        #${PANEL_ID} .gqp-product-item{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--hint);min-width:0}
-        #${PANEL_ID} .gqp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+        /* Weekly usage card — theme-aware surface */
+        #${PANEL_ID} .gqp-usage-card{background:var(--card-bg);border-radius:12px;padding:12px 14px;border:1px solid var(--card-line);color:var(--card-text)}
+        #${PANEL_ID} .gqp-usage-hero{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+        #${PANEL_ID} .gqp-usage-big{font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:28px;font-weight:700;line-height:1;letter-spacing:-0.03em}
+        #${PANEL_ID} .gqp-usage-unit{font-size:14px;font-weight:600;margin-left:1px;opacity:.8}
+        #${PANEL_ID} .gqp-usage-hero-label{font-size:12px;font-weight:600;color:var(--card-text)}
+        #${PANEL_ID} .gqp-usage-hero-sub{font-size:11px;color:var(--card-hint);margin-top:2px}
+
+        /* Official Grok usage bar */
+        #${PANEL_ID} .gqp-progress{display:flex;align-items:stretch;width:100%;height:20px;gap:1px}
+        #${PANEL_ID} .gqp-product-seg{height:100%;min-width:2px;flex-shrink:0;transition:width .3s ease}
+        #${PANEL_ID} .gqp-progress-rest{flex:1;min-width:2px;background:var(--card-track);transition:flex .3s ease}
+        #${PANEL_ID} .gqp-seg-start{border-radius:6px 2px 2px 6px}
+        #${PANEL_ID} .gqp-seg-mid{border-radius:2px}
+        #${PANEL_ID} .gqp-seg-end{border-radius:2px 6px 6px 2px}
+        #${PANEL_ID} .gqp-seg-rest{border-radius:2px 6px 6px 2px}
+        #${PANEL_ID} .gqp-seg-only{border-radius:6px}
+
+        #${PANEL_ID} .gqp-products{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;margin-top:10px}
+        #${PANEL_ID} .gqp-product-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--card-hint);min-width:0}
+        #${PANEL_ID} .gqp-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
         #${PANEL_ID} .gqp-product-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        #${PANEL_ID} .gqp-product-pct{margin-left:auto;font-weight:600;color:var(--sub);font-variant-numeric:tabular-nums}
-        #${PANEL_ID} .gqp-reset-line{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;padding-top:7px;border-top:1px solid var(--border);font-size:10.5px;color:var(--hint)}
-        #${PANEL_ID} .gqp-reset-eta{color:var(--sub);font-weight:500;white-space:nowrap}
+        #${PANEL_ID} .gqp-product-pct{margin-left:auto;font-weight:600;color:var(--card-pct);font-variant-numeric:tabular-nums}
+        #${PANEL_ID} .gqp-reset-line{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--card-line);font-size:10.5px;color:var(--card-hint)}
+        #${PANEL_ID} .gqp-reset-eta{color:var(--card-sub);font-weight:500;white-space:nowrap}
+        #${PANEL_ID} .gqp-usage-card .gqp-hint{color:var(--card-hint)}
 
-        /* Model chips (horizontal) */
-        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
-        #${PANEL_ID} .gqp-chip{text-align:center;padding:7px 2px;border-radius:8px;font-size:11.5px;font-weight:500;color:var(--hint);background:var(--bg3);border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
-        #${PANEL_ID} .gqp-chip-on{color:var(--text);background:rgba(96,165,250,.12);border-color:var(--active);font-weight:650;box-shadow:0 0 0 1px rgba(96,165,250,.15)}
-        #${PANEL_ID}.light .gqp-chip-on{background:rgba(37,99,235,.08)}
-        #${PANEL_ID} .gqp-chip-locked{opacity:.38}
-        #${PANEL_ID} .gqp-model-detail{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:7px;padding:0 2px;font-size:10.5px;color:var(--hint)}
+        /* Model chips — theme-aware pills */
+        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+        #${PANEL_ID} .gqp-chip{text-align:center;padding:7px 6px;border-radius:999px;font-size:12px;font-weight:500;letter-spacing:.01em;color:var(--hint);background:var(--chip-bg);border:1px solid var(--chip-border);transition:background .15s,color .15s,border-color .15s}
+        #${PANEL_ID} .gqp-chip:hover{background:var(--chip-hover);color:var(--sub)}
+        /* Selected: subtle lift only (no inverted high-contrast pill) */
+        #${PANEL_ID} .gqp-chip-on{color:var(--chip-on-text);background:var(--chip-on-bg);border-color:var(--chip-on-border);font-weight:600}
+        #${PANEL_ID} .gqp-chip-locked{opacity:.35;pointer-events:none}
+        #${PANEL_ID} .gqp-model-detail{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:0 2px;font-size:10.5px;color:var(--hint)}
         #${PANEL_ID} .gqp-model-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        #${PANEL_ID} .gqp-model-rk{flex-shrink:0;padding:1px 7px;border-radius:999px;background:var(--bg3);color:var(--sub);font-weight:500}
+        #${PANEL_ID} .gqp-model-rk{flex-shrink:0;padding:2px 8px;border-radius:999px;background:var(--chip-bg);border:1px solid var(--chip-border);color:var(--sub);font-weight:500}
 
-        #${PANEL_ID} .pfooter{padding:5px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
+        #${PANEL_ID} .pfooter{padding:6px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
     `);
 
