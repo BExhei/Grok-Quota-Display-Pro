@@ -1,8 +1,8 @@
 # Grok Quota Display Pro
 
-A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **SuperGrok weekly usage** and **current model** indicator.
+A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage** and **current model** for **Free / SuperGrok / SuperGrok Heavy**.
 
-[![Version](https://img.shields.io/badge/version-2.6.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-2.6.1-blue)](.)
 [![Language](https://img.shields.io/badge/language-Bilingual-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
@@ -11,12 +11,19 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ---
 
-## What's New (v2.6.0)
+## What's New (v2.6.1)
 
-Adapted to Grok’s **weekly SuperGrok usage** system and aligned with the official Settings → Usage UI.
+Adapted to Grok’s **weekly usage pool** and aligned with the official Settings → Usage UI. Works for all account tiers.
+
+### Tiers
+| Tier | Weekly pool bar | Heavy chip |
+|------|-----------------|------------|
+| **Free / Guest** | Explains no weekly shared pool | Locked |
+| **SuperGrok** | Full weekly % + product segments | Locked |
+| **SuperGrok Heavy** | Full weekly % + product segments | Unlocked |
 
 ### Weekly usage
-- Fetches data via `GetGrokCreditsConfig` (grpc-web / protobuf)
+- Fetches data via `GetGrokCreditsConfig` (grpc-web / protobuf) when the plan has a weekly pool
 - Large **remaining %** + used %
 - Progress bar matches official markup: `flex` + `gap-px`, **electric blue** (`#1a5eff` / opacity steps `1 → 0.7 → 0.45…`), unused track `flex-1`
 - Product breakdown (Chat / Imagine / API / Build / Voice / …)
@@ -26,7 +33,7 @@ Adapted to Grok’s **weekly SuperGrok usage** system and aligned with the offic
 - Horizontal pills: **Auto · Fast · Expert · Heavy**
 - Subtle selected state (no harsh invert)
 - Detail line: friendly model name + Think / DeepSearch when active
-- Heavy dimmed when not available
+- Heavy only for SuperGrok Heavy accounts
 
 ### Reliability & UX
 - **Silent refresh** — no “Loading…” flash after first paint; ⟳ only spins
@@ -59,7 +66,7 @@ Adapted to Grok’s **weekly SuperGrok usage** system and aligned with the offic
 2. Install from [Greasy Fork](https://greasyfork.org/scripts/578827-grok-quota-display-pro), or copy `grok-quota-display-pro.js` into a new userscript.
 3. Open https://grok.com while logged in — the panel appears bottom-right.
 
-**Tip**: SuperGrok (or equivalent) is needed for meaningful weekly data. If empty, click ⟳ or open **Settings → Usage** once.
+**Tip**: Weekly pool numbers appear on **SuperGrok / SuperGrok Heavy**. Free accounts still get the panel and model chips, with a clear free-tier message. If paid data is empty, click ⟳ or open **Settings → Usage**.
 
 ---
 
