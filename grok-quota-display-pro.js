@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 2.6.1
-// @description Grok weekly usage + model chips for Free / SuperGrok / SuperGrok Heavy; silent refresh
+// @version 3.0.0
+// @description Grok weekly usage + one-click usage-limit reset + model chips for Lite / SuperGrok / Plus / Heavy; silent refresh
 // @run-at       document-start
 // @author BExhei
 // @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
 // @match https://grok.com/*
 // @grant GM_addStyle
 // @license GPL-3.0
+// @homepageURL https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro
+// @supportURL https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro/feedback
 // @downloadURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
 // @updateURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
 // ==/UserScript==
@@ -135,7 +137,7 @@
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '2.6.1';
+    const VERSION = '3.0.0';
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
@@ -174,8 +176,8 @@
         usageEmpty: LANG === 'zh' ? '暂无周用量数据' : 'No weekly usage data',
         usageGuest: LANG === 'zh' ? '登录后可查看每周用量' : 'Sign in to view weekly usage',
         usageFree: LANG === 'zh'
-            ? '免费账户无每周共享额度 · SuperGrok / Heavy 可用'
-            : 'No weekly pool on Free · available with SuperGrok / Heavy',
+            ? '免费账户无每周共享额度 · SuperGrok 套餐可用'
+            : 'No weekly pool on Free · available with SuperGrok plans',
         usageEmptyPaid: LANG === 'zh'
             ? '暂无周用量数据，可点 ⟳ 重试或打开设置 → 用量'
             : 'No data yet — tap ⟳ or open Settings → Usage',
@@ -189,6 +191,19 @@
         loggedIn: LANG === 'zh' ? '已登录' : 'Logged in',
         unlockHeavy: LANG === 'zh' ? '需 SuperGrok Heavy' : 'SuperGrok Heavy only',
         resetLabel: LANG === 'zh' ? '重置' : 'Resets',
+        resetTitle: LANG === 'zh' ? '用量限额重置' : 'Usage Limit Reset',
+        resetInfo: LANG === 'zh'
+            ? '一次重置会清空本周用量。重置不可叠加，到期失效。'
+            : "A reset clears your weekly usage once. Resets don't stack and expire.",
+        resetAvailable: LANG === 'zh' ? '重置可用' : 'Reset Available',
+        resetExpires: (date) => LANG === 'zh' ? `将于 ${date} 过期` : `Expires on ${date}`,
+        resetRedeem: LANG === 'zh' ? '兑换' : 'Redeem',
+        resetRedeeming: LANG === 'zh' ? '兑换中…' : 'Redeeming…',
+        resetConfirm: LANG === 'zh'
+            ? '确认兑换这次重置？将立即清空本周用量。重置不可叠加，兑换后即失效。'
+            : 'Redeem this reset? It will clear your weekly usage now. Resets do not stack, and this token will be used.',
+        resetOk: LANG === 'zh' ? '已重置，本周用量已刷新' : 'Reset applied — weekly usage is fresh again',
+        resetFail: LANG === 'zh' ? '兑换失败，重置仍可用' : "Couldn't apply reset — it is still available",
         active: LANG === 'zh' ? '当前' : 'Active',
         noProducts: LANG === 'zh' ? '暂无分类明细' : 'No category breakdown',
         think: LANG === 'zh' ? '思考' : 'Think',
@@ -197,12 +212,14 @@
         unknownModel: LANG === 'zh' ? '未知' : 'Unknown',
     };
 
-    /** Tier ids: guest | free | premium | super | heavy */
+    /** Tier ids: guest | free | premium | lite | super | plus | heavy */
     const TIER = {
         guest:  { id: 'guest',   tier: () => L.guest,           color: '#6b7280', canUseHeavy: false, hasWeeklyPool: false },
         free:   { id: 'free',    tier: () => L.free,            color: '#4b5563', canUseHeavy: false, hasWeeklyPool: false },
-        premium:{ id: 'premium', tier: () => 'Premium+',        color: '#1d4ed8', canUseHeavy: false, hasWeeklyPool: false },
+        premium:{ id: 'premium', tier: () => 'Premium+',        color: '#1d4ed8', canUseHeavy: false, hasWeeklyPool: true },
+        lite:   { id: 'lite',    tier: () => 'SuperGrok Lite',  color: '#0d9488', canUseHeavy: false, hasWeeklyPool: true },
         super:  { id: 'super',   tier: () => 'SuperGrok',       color: '#047857', canUseHeavy: false, hasWeeklyPool: true },
+        plus:   { id: 'plus',    tier: () => 'SuperGrok Plus',  color: '#4f46e5', canUseHeavy: false, hasWeeklyPool: true },
         heavy:  { id: 'heavy',   tier: () => 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true,  hasWeeklyPool: true },
     };
     function makeTier(key) {
@@ -220,6 +237,9 @@
     // ─── State ───
     let cachedWeeklyUsage = null;   // { usagePercent, productUsage, currentPeriod, source }
     let lastWeeklyFetchAt = 0;
+    let cachedResetToken = null;    // { tokenId, validityEnd: Date, availableCount } | null
+    let lastResetFetchAt = 0;
+    let isRedeemingReset = false;
     let lastUiUsage = null;         // normalized weekly for UI
     let lastSub = null;
     let lastModelName = null;
@@ -351,6 +371,241 @@
         };
     }
 
+    // ─── Usage-limit reset: ConsumerUiSvc GetRemainingResets / RedeemReset ───
+    function encodeVarintBytes(n) {
+        const bytes = [];
+        n = n >>> 0;
+        while (n > 0x7f) {
+            bytes.push((n & 0x7f) | 0x80);
+            n >>>= 7;
+        }
+        bytes.push(n);
+        return bytes;
+    }
+
+    function encodeLengthDelimited(fieldNum, payload) {
+        const tag = encodeVarintBytes((fieldNum << 3) | 2);
+        const len = encodeVarintBytes(payload.length);
+        const out = new Uint8Array(tag.length + len.length + payload.length);
+        out.set(tag, 0);
+        out.set(len, tag.length);
+        out.set(payload, tag.length + len.length);
+        return out;
+    }
+
+    function grpcWebFrame(payload) {
+        const out = new Uint8Array(5 + payload.length);
+        out[0] = 0;
+        const view = new DataView(out.buffer);
+        view.setUint32(1, payload.length);
+        out.set(payload, 5);
+        return out;
+    }
+
+    function unwrapGrpcWebPayload(buffer) {
+        const buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+        if (buf.length < 5) return buf;
+        const flag = buf[0];
+        const len = (buf[1] << 24) | (buf[2] << 16) | (buf[3] << 8) | buf[4];
+        if ((flag & 0x7f) === 0 && len >= 0 && 5 + len <= buf.length) {
+            return buf.subarray(5, 5 + len);
+        }
+        return buf;
+    }
+
+    function parseConsumerResetToken(buf) {
+        let tokenId = '';
+        let validityEnd = null;
+        let pos = 0;
+        while (pos < buf.length) {
+            const tag = decodeVarint(buf, pos);
+            pos = tag.next;
+            const field = tag.value >> 3;
+            const wire = tag.value & 0x07;
+            if (wire === 2) {
+                const len = decodeVarint(buf, pos);
+                pos = len.next;
+                if (field === 10 || field === 1) {
+                    const s = new TextDecoder().decode(buf.subarray(pos, pos + len.value));
+                    if (s && s.length >= 4 && s.length < 200) tokenId = s;
+                } else if (field === 30 || field === 20 || field === 2 || field === 3) {
+                    const ts = parseProtobufTimestamp(buf, pos, len.value);
+                    if (ts && (field === 30 || field === 3 || !validityEnd)) validityEnd = ts;
+                }
+                pos += len.value;
+            } else if (wire === 0) {
+                pos = decodeVarint(buf, pos).next;
+            } else {
+                break;
+            }
+        }
+        if (!tokenId) return null;
+        let end = validityEnd ? new Date(validityEnd) : null;
+        if (end && !Number.isFinite(end.getTime())) end = null;
+        if (end && end.getTime() <= Date.now()) return null;
+        return { tokenId, validityEnd: end };
+    }
+
+    function walkResetTokens(buf, tokens) {
+        let pos = 0;
+        while (pos < buf.length) {
+            const tag = decodeVarint(buf, pos);
+            if (tag.next <= pos) break;
+            pos = tag.next;
+            const field = tag.value >> 3;
+            const wire = tag.value & 0x07;
+            if (wire === 2) {
+                const len = decodeVarint(buf, pos);
+                pos = len.next;
+                const chunk = buf.subarray(pos, pos + len.value);
+                pos += len.value;
+                if (field === 10 || field === 1) {
+                    const tok = parseConsumerResetToken(chunk);
+                    if (tok) tokens.push(tok);
+                    else walkResetTokens(chunk, tokens);
+                }
+            } else if (wire === 0) {
+                pos = decodeVarint(buf, pos).next;
+            } else {
+                break;
+            }
+        }
+    }
+
+    function parseRemainingResetsJson(text) {
+        try {
+            const obj = JSON.parse(text);
+            const raw = obj.tokens || obj.stillRedeemable || obj.still_redeemable || [];
+            const tokens = [];
+            for (const t of raw) {
+                const tokenId = t.tokenId || t.token_id;
+                const rawEnd = t.validityEnd || t.validity_end;
+                if (!tokenId) continue;
+                let end = rawEnd ? new Date(typeof rawEnd === 'string' ? rawEnd : (rawEnd.seconds ? Number(rawEnd.seconds) * 1000 : rawEnd)) : null;
+                if (end && !Number.isFinite(end.getTime())) end = null;
+                if (end && end.getTime() <= Date.now()) continue;
+                tokens.push({ tokenId, validityEnd: end });
+            }
+            return pickResetToken(tokens);
+        } catch {
+            return null;
+        }
+    }
+
+    function parseRemainingResets(buffer) {
+        const raw = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+        const tokens = [];
+        walkResetTokens(unwrapGrpcWebPayload(raw), tokens);
+        if (!tokens.length) walkResetTokens(raw, tokens);
+        return pickResetToken(tokens);
+    }
+
+    function pickResetToken(tokens) {
+        const valid = (tokens || []).filter(t => t && t.tokenId);
+        if (!valid.length) return null;
+        const dated = valid.filter(t => t.validityEnd && t.validityEnd.getTime() > Date.now());
+        const pool = dated.length ? dated : valid;
+        const soonest = pool.reduce((a, b) => {
+            if (!a.validityEnd) return b;
+            if (!b.validityEnd) return a;
+            return a.validityEnd.getTime() <= b.validityEnd.getTime() ? a : b;
+        });
+        return { ...soonest, availableCount: valid.length };
+    }
+
+    function encodeRedeemResetRequest(tokenId) {
+        const payload = encodeLengthDelimited(10, new TextEncoder().encode(String(tokenId)));
+        return grpcWebFrame(payload);
+    }
+
+    const GRPC_WEB_HEADERS = {
+        'content-type': 'application/grpc-web+proto',
+        'connect-protocol-version': '1',
+        'x-grpc-web': '1',
+    };
+    const RESET_RPC_BASES = [
+        '/prod_mc_billing.ConsumerUiSvc',
+        '/grok_api_v2.ConsumerUiSvc',
+    ];
+    let lastResetRpcBase = RESET_RPC_BASES[0];
+
+    async function fetchRemainingResets(maxAttempts) {
+        if (maxAttempts == null) maxAttempts = 1;
+        let lastErr = null;
+        const bases = lastResetRpcBase
+            ? [lastResetRpcBase, ...RESET_RPC_BASES.filter(b => b !== lastResetRpcBase)]
+            : RESET_RPC_BASES.slice();
+        for (const base of bases) {
+            const url = window.location.origin + base + '/GetRemainingResets';
+            const init = {
+                method: 'POST',
+                credentials: 'include',
+                headers: GRPC_WEB_HEADERS,
+                body: new Uint8Array([0, 0, 0, 0, 0]),
+            };
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    const res = await fetchWithTimeout(url, init, FETCH_TIMEOUT_MS);
+                    if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + base);
+                    const buf = await res.arrayBuffer();
+                    const parsed = parseRemainingResets(buf);
+                    lastResetRpcBase = base;
+                    if (!parsed) {
+                        console.warn('[GrokQuotaPro] GetRemainingResets empty', base, 'bytes', buf.byteLength);
+                    }
+                    return parsed;
+                } catch (e) {
+                    lastErr = e;
+                }
+                if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 350 * attempt));
+            }
+        }
+        // Connect JSON fallback (some gateways accept this)
+        try {
+            const url = window.location.origin + RESET_RPC_BASES[0] + '/GetRemainingResets';
+            const res = await fetchWithTimeout(url, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'content-type': 'application/json', accept: 'application/json' },
+                body: '{}',
+            }, FETCH_TIMEOUT_MS);
+            if (res.ok) {
+                const parsed = parseRemainingResetsJson(await res.text());
+                if (parsed) {
+                    lastResetRpcBase = RESET_RPC_BASES[0];
+                    return parsed;
+                }
+            }
+        } catch (e) {
+            lastErr = e;
+        }
+        if (lastErr) throw lastErr;
+        return null;
+    }
+
+    async function redeemUsageReset(tokenId) {
+        const bases = lastResetRpcBase
+            ? [lastResetRpcBase, ...RESET_RPC_BASES.filter(b => b !== lastResetRpcBase)]
+            : RESET_RPC_BASES.slice();
+        let lastErr = null;
+        for (const base of bases) {
+            try {
+                const res = await fetchWithTimeout(window.location.origin + base + '/RedeemReset', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: GRPC_WEB_HEADERS,
+                    body: encodeRedeemResetRequest(tokenId),
+                }, FETCH_TIMEOUT_MS);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                lastResetRpcBase = base;
+                return parseRemainingResets(await res.arrayBuffer());
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+        throw lastErr || new Error('redeem failed');
+    }
+
     async function fetchGrokCreditsConfig(maxAttempts) {
         if (maxAttempts == null) maxAttempts = 1;
         const url = window.location.origin + '/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
@@ -401,22 +656,43 @@
             const res = await __origFetch.apply(this, arguments);
             try {
                 const urlStr = typeof input === 'string' ? input : (input && input.url) || '';
-                if (typeof urlStr === 'string' && urlStr.includes('GetGrokCreditsConfig') && res.ok) {
-                    const buf = await res.clone().arrayBuffer().catch(() => null);
-                    if (buf) {
-                        const parsed = parseGrpcWebCreditsConfig(buf);
-                        if (parsed && typeof parsed.usagePercent === 'number') {
-                            cachedWeeklyUsage = { ...parsed, source: 'intercepted' };
-                            lastWeeklyFetchAt = Date.now();
-                            bootstrapDone = true;
-                            clearStartupRetry();
-                            // Quietly paint as soon as panel exists (helps first-load race)
-                            if (getPanel()) {
-                                const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
-                                const sub = detectSubscription();
-                                updateBadge(sub);
-                                updateContent({ usage, sub, snap: getModelSnapshot(), timestamp: Date.now(), silent: true });
+                if (typeof urlStr === 'string' && res.ok) {
+                    if (urlStr.includes('GetGrokCreditsConfig')) {
+                        const buf = await res.clone().arrayBuffer().catch(() => null);
+                        if (buf) {
+                            const parsed = parseGrpcWebCreditsConfig(buf);
+                            if (parsed && typeof parsed.usagePercent === 'number') {
+                                cachedWeeklyUsage = { ...parsed, source: 'intercepted' };
+                                lastWeeklyFetchAt = Date.now();
+                                bootstrapDone = true;
+                                clearStartupRetry();
+                                if (getPanel()) {
+                                    const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
+                                    const sub = detectSubscription();
+                                    updateBadge(sub);
+                                    updateContent({ usage, sub, snap: getModelSnapshot(), timestamp: Date.now(), silent: true });
+                                    refreshResetToken(false, 1).then(() => {
+                                        if (getPanel() && liveResetToken()) updateContent({ silent: true });
+                                    }).catch(() => {});
+                                }
                             }
+                        }
+                    } else if (urlStr.includes('GetRemainingResets')) {
+                        const ctype = (res.headers.get('content-type') || '').toLowerCase();
+                        let parsed = null;
+                        if (ctype.includes('json')) {
+                            const txt = await res.clone().text().catch(() => '');
+                            parsed = parseRemainingResetsJson(txt);
+                        } else {
+                            const buf = await res.clone().arrayBuffer().catch(() => null);
+                            if (buf) parsed = parseRemainingResets(buf);
+                        }
+                        cachedResetToken = parsed;
+                        lastResetFetchAt = Date.now();
+                        if (urlStr.includes('prod_mc_billing')) lastResetRpcBase = '/prod_mc_billing.ConsumerUiSvc';
+                        else if (urlStr.includes('grok_api_v2.ConsumerUiSvc')) lastResetRpcBase = '/grok_api_v2.ConsumerUiSvc';
+                        if (getPanel() && hasRenderedContent) {
+                            updateContent({ silent: true });
                         }
                     }
                 }
@@ -425,7 +701,7 @@
         };
     } catch (e) { /* ignore */ }
 
-    // ─── Subscription detection (Free / SuperGrok / SuperGrok Heavy) ───
+    // ─── Subscription detection (Lite / SuperGrok / Plus / Heavy) ───
     function pageTextBundle() {
         const fullText = (document.body?.innerText || '').toLowerCase();
         const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
@@ -448,20 +724,25 @@
         }
     }
 
+    function matchSuperGrokTier(text) {
+        if (!text) return null;
+        if (/supergrok\s*heavy|supergrok\s*pro(?!\s*lite)|grok\s*heavy/.test(text)) return 'heavy';
+        if (/supergrok\s*plus/.test(text)) return 'plus';
+        if (/supergrok\s*lite/.test(text)) return 'lite';
+        if (/\bsupergrok\b/.test(text)) return 'super';
+        return null;
+    }
+
     function detectSubscription() {
         try {
             const { fullText, headerText, blob } = pageTextBundle();
-            const isHeavy = /supergrok\s*heavy|grok\s*heavy/.test(blob)
-                || (headerText.includes('heavy') && fullText.includes('supergrok'));
-            const isSuper = /\bsupergrok\b/.test(blob);
-
-            // Highest tier first
-            if (isHeavy) return makeTier('heavy');
-            if (isSuper) return makeTier('super');
+            const fromHeader = matchSuperGrokTier(headerText);
+            if (fromHeader) return makeTier(fromHeader);
+            const fromPage = matchSuperGrokTier(blob);
+            if (fromPage) return makeTier(fromPage);
 
             // Weekly pool API only returns meaningful data for paid weekly plans
             if (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number') {
-                // DOM may lag; still prefer SuperGrok over Free when pool exists
                 return makeTier('super');
             }
 
@@ -469,7 +750,6 @@
                 return makeTier('premium');
             }
             if (isLikelyGuest()) return makeTier('guest');
-            // Default: free logged-in (or unknown)
             return makeTier('free');
         } catch {
             return makeTier('free');
@@ -506,6 +786,7 @@
         const attempts = (opts && opts.attempts) || 1;
         if (!force && cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number'
             && (now - lastWeeklyFetchAt) < WEEKLY_REFRESH_MS) {
+            await refreshResetToken(false, 1);
             return cachedWeeklyUsage;
         }
         try {
@@ -514,16 +795,41 @@
                 cachedWeeklyUsage = { ...parsed, source: 'api' };
                 lastWeeklyFetchAt = Date.now();
                 bootstrapDone = true;
+                await refreshResetToken(force, attempts);
                 return cachedWeeklyUsage;
             }
         } catch (e) {
             console.warn('[GrokQuotaPro] weekly usage fetch failed:', e);
         }
+        await refreshResetToken(!!force, attempts).catch(() => {});
         // Return stale cache if available
         if (cachedWeeklyUsage && typeof cachedWeeklyUsage.usagePercent === 'number') {
             return cachedWeeklyUsage;
         }
         return null;
+    }
+
+    async function refreshResetToken(force, attempts) {
+        const now = Date.now();
+        if (!force && cachedResetToken && cachedResetToken.validityEnd
+            && cachedResetToken.validityEnd.getTime() > now
+            && (now - lastResetFetchAt) < WEEKLY_REFRESH_MS) {
+            return cachedResetToken;
+        }
+        try {
+            const token = await fetchRemainingResets(attempts || 1);
+            cachedResetToken = token;
+            lastResetFetchAt = Date.now();
+            return cachedResetToken;
+        } catch (e) {
+            console.warn('[GrokQuotaPro] remaining resets fetch failed:', e);
+            if (cachedResetToken && cachedResetToken.validityEnd
+                && cachedResetToken.validityEnd.getTime() > Date.now()) {
+                return cachedResetToken;
+            }
+            cachedResetToken = null;
+            return null;
+        }
     }
 
     function sleep(ms) {
@@ -608,19 +914,20 @@
         return '';
     }
 
-    function friendlyModelLabel(modelName) {
-        const map = {
-            'grok-4-auto': LANG === 'zh' ? '自动' : 'Auto',
-            'grok-3': LANG === 'zh' ? '快速' : 'Fast',
-            'grok-4': LANG === 'zh' ? '专家' : 'Expert',
-            'grok-4-heavy': LANG === 'zh' ? '重度' : 'Heavy',
-            'grok-420': 'Grok 4.20',
-            'grok-420-computer-use-sa': 'Grok 4.3',
-            'grok-4-mini-thinking-tahoe': 'Grok 4 Fast',
-            'grok-4-1-non-thinking-w-tool': 'Grok 4.1',
-            'grok-4-1-thinking-1129': 'Grok 4.1 Think',
-        };
-        return map[modelName] || modelName || L.unknownModel;
+    function formatResetExpiryDate(date) {
+        if (!date) return '';
+        const d = date instanceof Date ? date : new Date(date);
+        if (!Number.isFinite(d.getTime())) return '';
+        return d.toLocaleDateString(LANG === 'zh' ? 'zh-CN' : undefined, {
+            month: 'short', day: 'numeric',
+        });
+    }
+
+    function liveResetToken() {
+        const t = cachedResetToken;
+        if (!t || !t.tokenId) return null;
+        if (t.validityEnd && t.validityEnd.getTime() <= Date.now()) return null;
+        return t;
     }
 
     function formatResetRemaining(resetIso) {
@@ -715,11 +1022,30 @@
         return html;
     }
 
+    function buildResetSection() {
+        const tok = liveResetToken();
+        if (!tok) return '';
+        const exp = tok.validityEnd ? formatResetExpiryDate(tok.validityEnd) : '';
+        const soon = !!(tok.validityEnd && (tok.validityEnd.getTime() - Date.now()) < 3 * 86400000);
+        const countHint = tok.availableCount > 1
+            ? ` · ${tok.availableCount}`
+            : '';
+        const btnLabel = isRedeemingReset ? L.resetRedeeming : L.resetRedeem;
+        let html = `<div class="gqp-section gqp-reset-sec"><div class="gqp-sec-title" title="${L.resetInfo}">${L.resetTitle}</div>`;
+        html += `<div class="gqp-reset-card">`;
+        html += `<div class="gqp-reset-meta">`;
+        html += `<div class="gqp-reset-avail">${L.resetAvailable}${countHint}</div>`;
+        if (exp) html += `<div class="gqp-reset-exp${soon ? ' gqp-reset-exp-soon' : ''}">${L.resetExpires(exp)}</div>`;
+        html += `</div>`;
+        html += `<button type="button" id="gqp-redeem" class="gqp-redeem"${isRedeemingReset ? ' disabled' : ''}>${btnLabel}</button>`;
+        html += `</div></div>`;
+        return html;
+    }
+
     function buildModelSection(snap, sub) {
         const s = sub || { canUseHeavy: false };
         const active = (snap && snap.category) || 'expert';
         const rk = requestKindLabel(snap && snap.requestKind);
-        const detail = friendlyModelLabel(snap && snap.modelName);
 
         let html = `<div class="gqp-section gqp-model-sec"><div class="gqp-sec-title">${L.modelTitle}</div>`;
         html += `<div class="gqp-chip-row">`;
@@ -730,13 +1056,9 @@
             let cls = 'gqp-chip';
             if (isOn) cls += ' gqp-chip-on';
             if (locked) cls += ' gqp-chip-locked';
-            const title = locked ? L.unlockHeavy : (isOn ? L.active : chip.short);
+            const title = locked ? L.unlockHeavy : (isOn ? (rk || L.active) : chip.short);
             html += `<div class="${cls}" data-kind="${chip.kind}" title="${title}">${chip.short}</div>`;
         }
-        html += `</div>`;
-        html += `<div class="gqp-model-detail">`;
-        html += `<span class="gqp-model-code">${detail}</span>`;
-        if (rk) html += `<span class="gqp-model-rk">${rk}</span>`;
         html += `</div></div>`;
         return html;
     }
@@ -757,10 +1079,29 @@
     function applyMinimized() {
         const p = getPanel();
         if (!p) return;
+        p.classList.toggle('min', !!cfg.minimized);
         const body = p.querySelector('.pbody');
         if (body) body.style.display = cfg.minimized ? 'none' : '';
+        const footer = p.querySelector('.pfooter');
+        if (footer) footer.style.display = cfg.minimized ? 'none' : '';
         const btn = p.querySelector('#gqp-min');
         if (btn) btn.textContent = cfg.minimized ? '+' : '\u2212';
+        updateMiniMeter();
+    }
+
+    function updateMiniMeter() {
+        const el = getPanel()?.querySelector('#gqp-mini');
+        if (!el) return;
+        const u = lastUiUsage || normalizeWeeklyForUi(cachedWeeklyUsage);
+        if (!u || typeof u.remaining !== 'number') {
+            el.innerHTML = `<span class="gqp-mini-cap" title="${L.usageEmpty}"><span class="gqp-mini-pct">—</span></span>`;
+            return;
+        }
+        const rem = Math.max(0, Math.min(100, u.remaining));
+        const used = u.percent;
+        const cls = used >= 90 ? 'c-danger' : used >= 70 ? 'c-warn' : 'c-ok';
+        const tip = `${rem}% ${L.remainLabel} · ${used}% ${L.usedLabel}`;
+        el.innerHTML = `<span class="gqp-mini-cap ${cls}" title="${tip}"><span class="gqp-mini-fill" style="width:${rem}%"></span><span class="gqp-mini-pct">${rem}%</span></span>`;
     }
 
     function updateBadge(sub) {
@@ -806,10 +1147,45 @@
         const m = snap || getModelSnapshot();
 
         // In-place render — never flash a blank loading screen when content exists
-        body.innerHTML = buildUsageSection(u, s) + buildModelSection(m, s);
+        body.innerHTML = buildUsageSection(u, s) + buildResetSection() + buildModelSection(m, s);
         hasRenderedContent = true;
+        updateMiniMeter();
         if (timestamp) updateFooter(timestamp);
         else if (!silent) updateFooter(Date.now());
+    }
+
+    async function handleRedeemReset() {
+        const tok = liveResetToken();
+        if (!tok || isRedeemingReset) return;
+        if (!window.confirm(L.resetConfirm)) return;
+        isRedeemingReset = true;
+        updateContent({ silent: true });
+        try {
+            const leftover = await redeemUsageReset(tok.tokenId);
+            cachedResetToken = leftover;
+            lastResetFetchAt = Date.now();
+            // Official UI waits ~2s for usage pool to refresh
+            await sleep(2000);
+            await fetchWeeklyUsage(true, { attempts: 2 });
+            isRedeemingReset = false;
+            updateContent({
+                usage: normalizeWeeklyForUi(cachedWeeklyUsage),
+                timestamp: Date.now(),
+                silent: true,
+            });
+            const footer = getPanel()?.querySelector('.pfooter');
+            if (footer) {
+                footer.innerHTML = `<span>${L.resetOk}</span><span class="fver">v${VERSION}</span>`;
+                setTimeout(() => updateFooter(Date.now()), 4000);
+            }
+            return;
+        } catch (e) {
+            console.warn('[GrokQuotaPro] redeem reset failed:', e);
+            alert(L.resetFail);
+        } finally {
+            isRedeemingReset = false;
+        }
+        updateContent({ silent: true });
     }
 
     /** Local-only model chip update (no network, no flash). */
@@ -1088,6 +1464,7 @@
         panel.innerHTML = `
             <div class="pheader">
                 <span class="badge" style="background:${sub.color}">${sub.tier}</span>
+                <div class="pmini" id="gqp-mini"></div>
                 <div class="hbtns">
                     <button id="gqp-refresh">\u27F3</button>
                     <button id="gqp-theme">\u2600\uFE0F</button>
@@ -1099,6 +1476,10 @@
         document.body.appendChild(panel);
 
         panel.querySelector('#gqp-refresh').onclick = () => refreshData(true, { silent: true });
+        panel.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('#gqp-redeem') : null;
+            if (btn) handleRedeemReset();
+        });
         panel.querySelector('#gqp-theme').onclick = () => {
             cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
             applyTheme();
@@ -1154,7 +1535,7 @@
             font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;
             min-width:268px;max-width:300px;background:var(--bg);color:var(--text);
             border:1px solid var(--border);border-radius:16px;
-            box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.03);
+            box-shadow:0 12px 32px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.04);
             overflow:hidden;user-select:none
         }
         /* Light — official #f2f2f2 card surface */
@@ -1165,11 +1546,22 @@
             --card-bg:#f2f2f2;--card-text:#0a0a0a;--card-sub:#525252;--card-hint:#737373;
             --card-track:#e5e5e5;--card-line:#e5e5e5;--card-pct:#404040;
             --chip-bg:#f2f2f2;--chip-border:#e8e8e8;--chip-hover:#ebebeb;
-            --chip-on-bg:#e8e8e8;--chip-on-text:#18181b;--chip-on-border:#d4d4d4;
-            box-shadow:0 12px 32px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.04)
+            --chip-on-bg:#e8e8e8;--chip-on-text:#18181b;--chip-on-border:#d4d4d4
         }
-        #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 9px;background:var(--bg2);border-bottom:1px solid var(--border)}
-        #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.95}
+        #${PANEL_ID} .pheader{display:flex;align-items:center;justify-content:space-between;padding:10px 12px 9px;background:var(--bg2);border-bottom:1px solid var(--border);gap:8px}
+        #${PANEL_ID}.min .pheader{border-bottom:none;padding:7px 10px}
+        #${PANEL_ID} .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;color:#fff;opacity:.95;flex-shrink:0}
+        #${PANEL_ID}.min .badge{display:none}
+        #${PANEL_ID}.min .pmini{justify-content:flex-start}
+        #${PANEL_ID}.min .gqp-mini-cap{width:100%;max-width:none}
+        #${PANEL_ID} .pmini{display:none;flex:1;align-items:center;justify-content:center;min-width:0}
+        #${PANEL_ID}.min .pmini{display:flex}
+        #${PANEL_ID} .gqp-mini-cap{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:20px;padding:0 10px;border-radius:999px;overflow:hidden;background:var(--chip-bg);border:1px solid var(--chip-border)}
+        #${PANEL_ID} .gqp-mini-fill{position:absolute;inset:0 auto 0 0;height:100%;pointer-events:none;opacity:.28;transition:width .3s ease}
+        #${PANEL_ID} .gqp-mini-cap.c-ok .gqp-mini-fill{background:var(--ok)}
+        #${PANEL_ID} .gqp-mini-cap.c-warn .gqp-mini-fill{background:var(--warn)}
+        #${PANEL_ID} .gqp-mini-cap.c-danger .gqp-mini-fill{background:var(--danger)}
+        #${PANEL_ID} .gqp-mini-pct{position:relative;z-index:1;font-family:inherit;font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:.02em;line-height:1;-webkit-font-smoothing:antialiased}
         #${PANEL_ID} .hbtns{display:flex;gap:2px}
         #${PANEL_ID} button{background:transparent;color:var(--sub);border:none;padding:3px 7px;border-radius:8px;font-size:13px;cursor:pointer}
         #${PANEL_ID} button:hover{background:var(--bg3);color:var(--text)}
@@ -1211,16 +1603,22 @@
         #${PANEL_ID} .gqp-reset-eta{color:var(--card-sub);font-weight:500;white-space:nowrap}
         #${PANEL_ID} .gqp-usage-card .gqp-hint{color:var(--card-hint)}
 
+        #${PANEL_ID} .gqp-reset-card{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card-bg);border:1px solid var(--card-line);border-radius:12px;padding:10px 12px}
+        #${PANEL_ID} .gqp-reset-meta{min-width:0}
+        #${PANEL_ID} .gqp-reset-avail{font-size:12.5px;font-weight:600;color:var(--card-text)}
+        #${PANEL_ID} .gqp-reset-exp{font-size:11px;color:var(--card-hint);margin-top:2px}
+        #${PANEL_ID} .gqp-reset-exp-soon{color:var(--warn)}
+        #${PANEL_ID} .gqp-redeem{flex-shrink:0;background:var(--text)!important;color:var(--bg)!important;border:none;padding:6px 11px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer}
+        #${PANEL_ID} .gqp-redeem:hover{opacity:.9}
+        #${PANEL_ID} .gqp-redeem:disabled{opacity:.55;cursor:default}
+
         /* Model chips — theme-aware pills */
-        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-        #${PANEL_ID} .gqp-chip{text-align:center;padding:7px 6px;border-radius:999px;font-size:12px;font-weight:500;letter-spacing:.01em;color:var(--hint);background:var(--chip-bg);border:1px solid var(--chip-border);transition:background .15s,color .15s,border-color .15s}
+        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+        #${PANEL_ID} .gqp-chip{display:flex;align-items:center;justify-content:center;box-sizing:border-box;height:20px;padding:0 6px;border-radius:999px;font-size:11px;line-height:18px;font-weight:500;letter-spacing:.01em;color:var(--hint);background:var(--chip-bg);border:1px solid var(--chip-border);transition:background .15s,color .15s,border-color .15s}
         #${PANEL_ID} .gqp-chip:hover{background:var(--chip-hover);color:var(--sub)}
         /* Selected: subtle lift only (no inverted high-contrast pill) */
         #${PANEL_ID} .gqp-chip-on{color:var(--chip-on-text);background:var(--chip-on-bg);border-color:var(--chip-on-border);font-weight:600}
         #${PANEL_ID} .gqp-chip-locked{opacity:.35;pointer-events:none}
-        #${PANEL_ID} .gqp-model-detail{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:0 2px;font-size:10.5px;color:var(--hint)}
-        #${PANEL_ID} .gqp-model-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        #${PANEL_ID} .gqp-model-rk{flex-shrink:0;padding:2px 8px;border-radius:999px;background:var(--chip-bg);border:1px solid var(--chip-border);color:var(--sub);font-weight:500}
 
         #${PANEL_ID} .pfooter{padding:6px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
