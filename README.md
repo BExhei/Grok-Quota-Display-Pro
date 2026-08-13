@@ -2,7 +2,7 @@
 
 A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage**, **one-click usage-limit reset**, and **current model** for **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**.
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-3.0.1-blue)](.)
 [![Language](https://img.shields.io/badge/language-Bilingual-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
@@ -12,7 +12,7 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ---
 
-## What's New (v3.0.0)
+## What's New (v3.0.1)
 
 Adapted to Grok’s **weekly usage pool**, official **usage-limit reset**, and the current SuperGrok plan ladder.
 
@@ -45,7 +45,9 @@ Adapted to Grok’s **weekly usage pool**, official **usage-limit reset**, and t
 
 ### Minimized mode
 - Hides the expanded card and tier badge
-- Compact remaining-% capsule on the left, with a translucent fill that follows remaining %
+- Compact **used-%** capsule on the left (same meaning as the official usage bar)
+- Number and translucent fill both show **used** (e.g. 63% used → `63%` and a 63% fill)
+- Hover tooltip still lists used + remaining
 - Fill and text change color by usage stage (ok / warn / danger)
 
 ### Reliability & UX
@@ -91,7 +93,7 @@ Adapted to Grok’s **weekly usage pool**, official **usage-limit reset**, and t
 2. Panel shows tier badge, weekly usage, reset (if available), and current model.
 3. Switch model in Grok’s selector — chips update without a network flash.
 4. If a reset is available, click **Redeem** and confirm to clear this week’s pool.
-5. Drag the header to move; use theme / minimize as needed. Minimized view is a compact remaining-% capsule.
+5. Drag the header to move; use theme / minimize as needed. Minimized view is a compact **used-%** capsule aligned with the official usage bar.
 
 ---
 
