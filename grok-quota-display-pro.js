@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name Grok Quota Display Pro
 // @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 3.0.0
+// @version 3.0.1
 // @description Grok weekly usage + one-click usage-limit reset + model chips for Lite / SuperGrok / Plus / Heavy; silent refresh
 // @run-at       document-start
 // @author BExhei
@@ -137,7 +137,7 @@
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '3.0.0';
+    const VERSION = '3.0.1';
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
@@ -1093,15 +1093,15 @@
         const el = getPanel()?.querySelector('#gqp-mini');
         if (!el) return;
         const u = lastUiUsage || normalizeWeeklyForUi(cachedWeeklyUsage);
-        if (!u || typeof u.remaining !== 'number') {
+        if (!u || typeof u.percent !== 'number') {
             el.innerHTML = `<span class="gqp-mini-cap" title="${L.usageEmpty}"><span class="gqp-mini-pct">—</span></span>`;
             return;
         }
-        const rem = Math.max(0, Math.min(100, u.remaining));
-        const used = u.percent;
+        const used = Math.max(0, Math.min(100, u.percent));
+        const rem = u.remaining != null ? u.remaining : Math.max(0, 100 - used);
         const cls = used >= 90 ? 'c-danger' : used >= 70 ? 'c-warn' : 'c-ok';
-        const tip = `${rem}% ${L.remainLabel} · ${used}% ${L.usedLabel}`;
-        el.innerHTML = `<span class="gqp-mini-cap ${cls}" title="${tip}"><span class="gqp-mini-fill" style="width:${rem}%"></span><span class="gqp-mini-pct">${rem}%</span></span>`;
+        const tip = `${used}% ${L.usedLabel} · ${rem}% ${L.remainLabel}`;
+        el.innerHTML = `<span class="gqp-mini-cap ${cls}" title="${tip}"><span class="gqp-mini-fill" style="width:${used}%"></span><span class="gqp-mini-pct">${used}%</span></span>`;
     }
 
     function updateBadge(sub) {
