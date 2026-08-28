@@ -1,18 +1,30 @@
 // ==UserScript==
-// @name Grok Quota Display Pro
-// @namespace https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version 3.0.1
-// @description Grok weekly usage + one-click usage-limit reset + model chips for Lite / SuperGrok / Plus / Heavy; silent refresh
-// @run-at       document-start
-// @author BExhei
-// @icon https://www.google.com/s2/favicons?sz=64&domain=grok.com
-// @match https://grok.com/*
-// @grant GM_addStyle
-// @license GPL-3.0
-// @homepageURL https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro
-// @supportURL https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro/feedback
-// @downloadURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
-// @updateURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
+// @name               Grok Quota Display Pro
+// @name:en            Grok Quota Display Pro
+// @name:zh            Grok 用量显示 Pro
+// @name:zh-CN         Grok 用量显示 Pro
+// @name:zh-HK         Grok 用量顯示 Pro
+// @name:zh-SG         Grok 用量显示 Pro
+// @name:zh-TW         Grok 用量顯示 Pro
+// @namespace          https://github.com/BExhei/Grok-Quota-Display-Pro
+// @version            3.1.0
+// @description        Grok weekly usage + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
+// @description:en     Grok weekly usage + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
+// @description:zh     显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-CN  显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-HK  顯示 Grok 每週用量，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
+// @description:zh-SG  显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-TW  顯示 Grok 每週用量，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
+// @run-at             document-start
+// @author             BExhei
+// @icon               https://www.google.com/s2/favicons?sz=64&domain=grok.com
+// @match              https://grok.com/*
+// @grant              GM_addStyle
+// @license            GPL-3.0
+// @homepageURL        https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro
+// @supportURL         https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro/feedback
+// @downloadURL        https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
+// @updateURL          https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
 // ==/UserScript==
 
 (function () {
@@ -31,6 +43,11 @@
         "Fast": "grok-3",
         "Expert": "grok-4",
         "Heavy": "grok-4-heavy",
+        "Build": "grok-build",
+        "Grok Build": "grok-build",
+        "Build Mode": "grok-build",
+        "构建": "grok-build",
+        "构建模式": "grok-build",
         "Grok 4 Fast": "grok-4-mini-thinking-tahoe",
         "Grok 4.1": "grok-4-1-non-thinking-w-tool",
         "Grok 4.1 Thinking": "grok-4-1-thinking-1129",
@@ -43,6 +60,10 @@
         "grok-3": "fast",
         "grok-4": "expert",
         "grok-4-heavy": "heavy",
+        "grok-build": "build",
+        "grok-build-0.1": "build",
+        "grok-4-build": "build",
+        "grok-4.6-build": "build",
         "grok-4-auto": "auto",
         "grok-4-1-non-thinking-w-tool": "fast",
         "grok-4-1-thinking-1129": "expert",
@@ -69,17 +90,41 @@
         const modelButton = findModelButton(queryBar);
         if (!modelButton) return "grok-3";
 
+        function resolveModelLabel(raw) {
+            const t = (raw || '').replace(/\s+/g, ' ').trim();
+            if (!t) return null;
+            if (MODEL_MAP[t]) return MODEL_MAP[t];
+            if (/^(build|grok build|build mode|构建|构建模式)$/i.test(t)) return 'grok-build';
+            return null;
+        }
+
         // Check text span first
         const textEl = modelButton.querySelector('span.font-semibold');
         if (textEl) {
-            const t = textEl.textContent.trim();
-            if (MODEL_MAP[t]) return MODEL_MAP[t];
+            const mapped = resolveModelLabel(textEl.textContent);
+            if (mapped) return mapped;
         }
         // Fallback to old chooser text
         const oldText = modelButton.querySelector('span.inline-block');
         if (oldText) {
-            const t = oldText.textContent.trim();
-            if (MODEL_MAP[t]) return MODEL_MAP[t];
+            const mapped = resolveModelLabel(oldText.textContent);
+            if (mapped) return mapped;
+        }
+        const shortText = (modelButton.textContent || '').replace(/\s+/g, ' ').trim();
+        if (shortText.length <= 24) {
+            const mappedShort = resolveModelLabel(shortText);
+            if (mappedShort) return mappedShort;
+        }
+        for (const btn of queryBar.querySelectorAll('button')) {
+            const aria = (btn.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+            const text = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+            const isBuild = /^(build|grok build|build mode|构建|构建模式)$/i.test(aria)
+                || (text.length <= 16 && /^(build|grok build|build mode|构建|构建模式)$/i.test(text));
+            if (!isBuild) continue;
+            const on = btn.getAttribute('aria-pressed') === 'true'
+                || btn.getAttribute('aria-selected') === 'true'
+                || btn.getAttribute('data-state') === 'on';
+            if (btn === modelButton || on) return 'grok-build';
         }
         // SVG path matching
         const svg = modelButton.querySelector('svg');
@@ -131,13 +176,15 @@
 
     // ─── Constants ───
     const PANEL_ID = 'grok-quota-pro';
+    const HOST_ID = 'grok-quota-pro-host';
     const WEEKLY_REFRESH_MS = 5 * 60 * 1000; // 5 min for weekly credits API
     const MODEL_POLL_MS = 1500;              // light local model-chip sync (no network)
     const FETCH_TIMEOUT_MS = 10000;
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '3.0.1';
+    const VERSION = '3.1.0';
+    const REMOUNT_WATCH_MS = 700;
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
 
@@ -163,6 +210,7 @@
         { kind: 'auto', short: LANG === 'zh' ? '自动' : 'Auto' },
         { kind: 'fast', short: LANG === 'zh' ? '快速' : 'Fast' },
         { kind: 'expert', short: LANG === 'zh' ? '专家' : 'Expert' },
+        { kind: 'build', short: LANG === 'zh' ? '构建' : 'Build' },
         { kind: 'heavy', short: LANG === 'zh' ? '重度' : 'Heavy' },
     ];
 
@@ -171,6 +219,7 @@
         fast: LANG === 'zh' ? '快速' : 'Fast',
         expert: LANG === 'zh' ? '专家' : 'Expert',
         auto: LANG === 'zh' ? '自动' : 'Auto',
+        build: LANG === 'zh' ? '构建' : 'Build',
         heavy: LANG === 'zh' ? '重度' : 'Heavy',
         usageTitle: LANG === 'zh' ? '每周用量' : 'Weekly usage',
         usageEmpty: LANG === 'zh' ? '暂无周用量数据' : 'No weekly usage data',
@@ -232,6 +281,22 @@
         set theme(v) { localStorage.setItem('grokQuotaTheme', v); },
         get minimized() { return localStorage.getItem('grokQuotaMin') === '1'; },
         set minimized(v) { localStorage.setItem('grokQuotaMin', v ? '1' : '0'); },
+        get pos() {
+            try {
+                const raw = localStorage.getItem('grokQuotaPos');
+                if (!raw) return null;
+                const p = JSON.parse(raw);
+                if (typeof p.left === 'number' && typeof p.top === 'number') return p;
+            } catch (e) { /* ignore */ }
+            return null;
+        },
+        set pos(v) {
+            if (!v || typeof v.left !== 'number' || typeof v.top !== 'number') {
+                localStorage.removeItem('grokQuotaPos');
+                return;
+            }
+            localStorage.setItem('grokQuotaPos', JSON.stringify({ left: v.left, top: v.top }));
+        },
     };
 
     // ─── State ───
@@ -1063,9 +1128,115 @@
         return html;
     }
 
-    // ─── Panel management ───
+    // ─── Panel management (Shadow DOM on <html>, survives React body remount) ───
+    let shadowRootRef = null;
+    let remountTimer = null;
+    let hostGuardObserver = null;
+    let hostDragging = false;
+
+    function isDesktopViewport() {
+        return window.innerWidth >= 900;
+    }
+
+    function officialSettingsOpen() {
+        const dlg = document.querySelector('[data-analytics-name="settings"][role="dialog"]');
+        return !!(dlg && dlg.getAttribute('data-state') === 'open');
+    }
+
+    function shouldShowSettingsFallback() {
+        return isDesktopViewport() && !officialSettingsOpen();
+    }
+
+    function getHost() {
+        return document.getElementById(HOST_ID);
+    }
+
     function getPanel() {
+        const host = getHost();
+        if (host && host.shadowRoot) {
+            return host.shadowRoot.getElementById(PANEL_ID);
+        }
         return document.getElementById(PANEL_ID);
+    }
+
+    function isolateHostEvents(host) {
+        if (host.dataset.gqpIsolated === '1') return;
+        host.dataset.gqpIsolated = '1';
+        // Bubble-phase only so shadow-internal button handlers still run first.
+        for (const type of ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'dblclick', 'contextmenu']) {
+            host.addEventListener(type, (e) => { e.stopPropagation(); }, false);
+        }
+    }
+
+    function clampHostPos(left, top, w, h) {
+        const maxL = Math.max(0, window.innerWidth - w);
+        const maxT = Math.max(0, window.innerHeight - h);
+        return {
+            left: Math.max(0, Math.min(left, maxL)),
+            top: Math.max(0, Math.min(top, maxT)),
+        };
+    }
+
+    function applyHostPosition(host, pos) {
+        if (!host) return;
+        const w = host.offsetWidth || 280;
+        const h = host.offsetHeight || 48;
+        if (!pos) {
+            host.style.left = '';
+            host.style.top = '';
+            host.style.right = '16px';
+            host.style.bottom = '16px';
+            return;
+        }
+        const c = clampHostPos(pos.left, pos.top, w, h);
+        host.style.right = 'unset';
+        host.style.bottom = 'unset';
+        host.style.left = c.left + 'px';
+        host.style.top = c.top + 'px';
+    }
+
+    function restoreHostPosition(host) {
+        if (hostDragging) return;
+        applyHostPosition(host || getHost(), cfg.pos);
+    }
+
+    function ensureHost() {
+        let host = getHost();
+        let created = false;
+        if (!host) {
+            host = document.createElement('div');
+            host.id = HOST_ID;
+            host.setAttribute('data-grok-quota-sticky', '1');
+            host.style.cssText = [
+                'all:initial',
+                'position:fixed',
+                'z-index:2147483646',
+                'bottom:16px',
+                'right:16px',
+                'width:auto',
+                'height:auto',
+                'pointer-events:none',
+                'display:block'
+            ].join(';');
+            document.documentElement.appendChild(host);
+            created = true;
+        } else if (host.parentNode !== document.documentElement) {
+            document.documentElement.appendChild(host);
+        }
+        isolateHostEvents(host);
+        if (!host.shadowRoot) {
+            shadowRootRef = host.attachShadow({ mode: 'open' });
+        } else {
+            shadowRootRef = host.shadowRoot;
+        }
+        if (!shadowRootRef.getElementById('gqp-style')) {
+            const style = document.createElement('style');
+            style.id = 'gqp-style';
+            style.textContent = PANEL_CSS;
+            shadowRootRef.prepend(style);
+        }
+        if (created) restoreHostPosition(host);
+        return host;
     }
 
     function applyTheme() {
@@ -1384,6 +1555,7 @@
         if (domObserver) return;
 
         domObserver = new MutationObserver(() => {
+            remountIfNeeded();
             const qb = getQueryBar();
             if (qb && qb !== queryBarElement) {
                 queryBarElement = qb;
@@ -1397,8 +1569,9 @@
                 // Keep weekly usage polling even without query bar
             }
         });
-        if (document.body) {
-            domObserver.observe(document.body, { childList: true, subtree: true });
+        const root = document.documentElement || document.body;
+        if (root) {
+            domObserver.observe(root, { childList: true, subtree: true });
         }
     }
 
@@ -1423,68 +1596,116 @@
         });
     }
 
-    // ─── Drag ───
+    // ─── Drag (move the fixed host, never the relative panel) ───
     function enableDrag(panel) {
         const header = panel.querySelector('.pheader');
-        if (!header) return;
-        let ox = 0, oy = 0, sx = 0, sy = 0, on = false;
+        const host = getHost();
+        if (!header || !host) return;
+        if (header.dataset.gqpDrag === '1') return;
+        header.dataset.gqpDrag = '1';
         header.style.cursor = 'grab';
-        header.addEventListener('mousedown', e => {
-            if (e.target.tagName === 'BUTTON') return;
-            on = true;
+        header.style.touchAction = 'none';
+
+        const DRAG_THRESHOLD = 4;
+        let ox = 0, oy = 0, sx = 0, sy = 0;
+        let pending = false;
+        let dragging = false;
+        let pointerId = null;
+
+        function endDrag(e) {
+            if (pointerId != null && header.hasPointerCapture && header.hasPointerCapture(pointerId)) {
+                try { header.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+            }
+            if (dragging) {
+                const left = parseFloat(host.style.left);
+                const top = parseFloat(host.style.top);
+                if (Number.isFinite(left) && Number.isFinite(top)) cfg.pos = { left, top };
+            }
+            pending = false;
+            dragging = false;
+            hostDragging = false;
+            pointerId = null;
+            header.style.cursor = 'grab';
+            if (e) e.stopPropagation();
+        }
+
+        header.addEventListener('pointerdown', (e) => {
+            if (e.button != null && e.button !== 0) return;
+            if (e.target && e.target.closest && e.target.closest('button')) return;
+            pending = true;
+            dragging = false;
+            pointerId = e.pointerId;
             sx = e.clientX;
             sy = e.clientY;
-            const r = panel.getBoundingClientRect();
+            const r = host.getBoundingClientRect();
             ox = r.left;
             oy = r.top;
-            header.style.cursor = 'grabbing';
+            try { header.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
             e.preventDefault();
+            e.stopPropagation();
         });
-        document.addEventListener('mousemove', e => {
-            if (!on) return;
-            panel.style.right = panel.style.bottom = 'unset';
-            panel.style.left = Math.max(0, Math.min(ox + e.clientX - sx, window.innerWidth - panel.offsetWidth)) + 'px';
-            panel.style.top = Math.max(0, Math.min(oy + e.clientY - sy, window.innerHeight - panel.offsetHeight)) + 'px';
-        });
-        document.addEventListener('mouseup', () => {
-            if (on) {
-                on = false;
-                header.style.cursor = 'grab';
+
+        header.addEventListener('pointermove', (e) => {
+            if (!pending && !dragging) return;
+            const dx = e.clientX - sx;
+            const dy = e.clientY - sy;
+            if (!dragging) {
+                if ((dx * dx + dy * dy) < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+                dragging = true;
+                hostDragging = true;
+                header.style.cursor = 'grabbing';
             }
+            const c = clampHostPos(ox + dx, oy + dy, host.offsetWidth, host.offsetHeight);
+            applyHostPosition(host, c);
+            e.stopPropagation();
         });
+
+        header.addEventListener('pointerup', endDrag);
+        header.addEventListener('pointercancel', endDrag);
     }
 
     // ─── Panel creation ───
     function createPanel() {
+        ensureHost();
         if (getPanel()) return;
-        if (!document.body) return;
+        if (!shadowRootRef) return;
         const sub = detectSubscription();
         const panel = document.createElement('div');
         panel.id = PANEL_ID;
+        panel.style.pointerEvents = 'auto';
+        panel.style.left = panel.style.top = panel.style.right = panel.style.bottom = '';
         panel.innerHTML = `
             <div class="pheader">
                 <span class="badge" style="background:${sub.color}">${sub.tier}</span>
                 <div class="pmini" id="gqp-mini"></div>
                 <div class="hbtns">
-                    <button id="gqp-refresh">\u27F3</button>
-                    <button id="gqp-theme">\u2600\uFE0F</button>
-                    <button id="gqp-min">\u2212</button>
+                    <button type="button" id="gqp-refresh">\u27F3</button>
+                    <button type="button" id="gqp-theme">\u2600\uFE0F</button>
+                    <button type="button" id="gqp-min">\u2212</button>
                 </div>
             </div>
             <div class="pbody"></div>
             <div class="pfooter"></div>`;
-        document.body.appendChild(panel);
+        shadowRootRef.appendChild(panel);
 
-        panel.querySelector('#gqp-refresh').onclick = () => refreshData(true, { silent: true });
+        panel.querySelector('#gqp-refresh').onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            refreshData(true, { silent: true });
+        };
         panel.addEventListener('click', (e) => {
             const btn = e.target && e.target.closest ? e.target.closest('#gqp-redeem') : null;
             if (btn) handleRedeemReset();
         });
-        panel.querySelector('#gqp-theme').onclick = () => {
+        panel.querySelector('#gqp-theme').onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             cfg.theme = cfg.theme === 'dark' ? 'light' : 'dark';
             applyTheme();
         };
-        panel.querySelector('#gqp-min').onclick = () => {
+        panel.querySelector('#gqp-min').onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             cfg.minimized = !cfg.minimized;
             applyMinimized();
         };
@@ -1492,13 +1713,69 @@
         applyTheme();
         applyMinimized();
         enableDrag(panel);
+        restoreHostPosition(getHost());
+    }
+
+    function remountIfNeeded() {
+        ensureHost();
+        const panelGone = !getPanel();
+        if (!panelGone) return false;
+        createPanel();
+        const p = getPanel();
+        if (!p) return false;
+        applyTheme();
+        applyMinimized();
+        restoreHostPosition(getHost());
+        if (hasRenderedContent) {
+            updateContent({
+                usage: lastUiUsage || normalizeWeeklyForUi(cachedWeeklyUsage),
+                sub: lastSub || detectSubscription(),
+                silent: true,
+                timestamp: lastWeeklyFetchAt || Date.now()
+            });
+        } else {
+            const body = p.querySelector('.pbody');
+            if (body && !body.innerHTML) body.innerHTML = `<div class="loading">${L.loading}</div>`;
+        }
+        return true;
+    }
+
+    function startHostGuard() {
+        if (!hostGuardObserver) {
+            hostGuardObserver = new MutationObserver(() => remountIfNeeded());
+            hostGuardObserver.observe(document.documentElement, { childList: true, subtree: false });
+        }
+        if (remountTimer) return;
+        remountTimer = setInterval(remountIfNeeded, REMOUNT_WATCH_MS);
+    }
+
+    function setupSettingsClickFallback() {
+        document.addEventListener('click', (e) => {
+            const t = e.target && e.target.closest ? e.target.closest('button, a, [role="menuitem"]') : null;
+            if (!t) return;
+            const label = ((t.getAttribute('aria-label') || '') + ' ' + (t.textContent || '')).toLowerCase();
+            if (!/(settings|设置|偏好|usage|用量)/.test(label)) return;
+            setTimeout(() => {
+                if (!shouldShowSettingsFallback()) return;
+                remountIfNeeded();
+                const p = getPanel();
+                if (!p) return;
+                if (cfg.minimized) {
+                    cfg.minimized = false;
+                    applyMinimized();
+                }
+                updateContent({ silent: true });
+            }, 450);
+        }, true);
     }
 
     // ─── Init ───
     function init() {
-        if (getPanel()) return;
         createPanel();
-        if (!getPanel()) return; // body not ready yet
+        if (!getPanel()) {
+            setTimeout(init, 400);
+            return;
+        }
 
         // Weekly poll always on (does not require query bar)
         startPolling();
@@ -1512,16 +1789,23 @@
 
         setupDomObserver();
         setupVisibilityHandler();
+        startHostGuard();
+        setupSettingsClickFallback();
+        if (!window.__gqpResizeBound) {
+            window.__gqpResizeBound = true;
+            window.addEventListener('resize', () => restoreHostPosition(getHost()));
+        }
 
         // First open: delayed multi-retry bootstrap (avoids early "load failed")
         const body = getPanel()?.querySelector('.pbody');
-        if (body) body.innerHTML = `<div class="loading">${L.loading}</div>`;
+        if (body && !hasRenderedContent) body.innerHTML = `<div class="loading">${L.loading}</div>`;
         refreshData(true, { bootstrap: true, silent: false });
     }
 
-    // ─── Styles ───
-    GM_addStyle(`
+    // ─── Styles (injected into Shadow DOM) ───
+    const PANEL_CSS = `
         /* Dark (default) — grok.com surface layers */
+        :host { all: initial; }
         #${PANEL_ID}{
             --bg:#0c0c0e;--bg2:#121214;--bg3:#1c1c1f;--border:#2a2a30;
             --text:#f4f4f5;--sub:#a1a1aa;--hint:#71717a;
@@ -1531,7 +1815,7 @@
             --card-track:#3f3f46;--card-line:#3f3f46;--card-pct:#d4d4d8;
             --chip-bg:rgba(255,255,255,.04);--chip-border:rgba(255,255,255,.08);--chip-hover:rgba(255,255,255,.07);
             --chip-on-bg:rgba(255,255,255,.1);--chip-on-text:#e4e4e7;--chip-on-border:rgba(255,255,255,.18);
-            position:fixed;bottom:16px;right:16px;z-index:999999;
+            position:relative;z-index:1; pointer-events:auto;
             font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;font-size:12.5px;
             min-width:268px;max-width:300px;background:var(--bg);color:var(--text);
             border:1px solid var(--border);border-radius:16px;
@@ -1613,8 +1897,8 @@
         #${PANEL_ID} .gqp-redeem:disabled{opacity:.55;cursor:default}
 
         /* Model chips — theme-aware pills */
-        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
-        #${PANEL_ID} .gqp-chip{display:flex;align-items:center;justify-content:center;box-sizing:border-box;height:20px;padding:0 6px;border-radius:999px;font-size:11px;line-height:18px;font-weight:500;letter-spacing:.01em;color:var(--hint);background:var(--chip-bg);border:1px solid var(--chip-border);transition:background .15s,color .15s,border-color .15s}
+        #${PANEL_ID} .gqp-chip-row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px}
+        #${PANEL_ID} .gqp-chip{display:flex;align-items:center;justify-content:center;box-sizing:border-box;height:20px;padding:0 3px;border-radius:999px;font-size:10.5px;line-height:18px;font-weight:500;letter-spacing:0;color:var(--hint);background:var(--chip-bg);border:1px solid var(--chip-border);transition:background .15s,color .15s,border-color .15s;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         #${PANEL_ID} .gqp-chip:hover{background:var(--chip-hover);color:var(--sub)}
         /* Selected: subtle lift only (no inverted high-contrast pill) */
         #${PANEL_ID} .gqp-chip-on{color:var(--chip-on-text);background:var(--chip-on-bg);border-color:var(--chip-on-border);font-weight:600}
@@ -1622,7 +1906,7 @@
 
         #${PANEL_ID} .pfooter{padding:6px 12px;font-size:10.5px;color:var(--hint);background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between}
         #${PANEL_ID} .fver{opacity:.45}
-    `);
+    `;
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
