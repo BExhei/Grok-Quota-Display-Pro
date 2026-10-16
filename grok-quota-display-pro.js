@@ -7,28 +7,35 @@
 // @name:zh-SG         Grok 用量显示 Pro
 // @name:zh-TW         Grok 用量顯示 Pro
 // @namespace          https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version            3.1.0
-// @description        Grok weekly usage + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
-// @description:en     Grok weekly usage + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
-// @description:zh     显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
-// @description:zh-CN  显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
-// @description:zh-HK  顯示 Grok 每週用量，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
-// @description:zh-SG  显示 Grok 每周用量，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
-// @description:zh-TW  顯示 Grok 每週用量，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
+// @version            3.2.0
+// @description        Grok weekly usage + Grok Bot weekly limit + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
+// @description:en     Grok weekly usage + Grok Bot weekly limit + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
+// @description:zh     显示 Grok 每周用量和 Grok Bot 每周限额，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-CN  显示 Grok 每周用量和 Grok Bot 每周限额，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-HK  顯示 Grok 每週用量和 Grok Bot 每週限額，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
+// @description:zh-SG  显示 Grok 每周用量和 Grok Bot 每周限额，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
+// @description:zh-TW  顯示 Grok 每週用量和 Grok Bot 每週限額，支援一鍵重置額度，並標註當前模型（自動 / 快速 / 專家 / 構建 / 重度）
 // @run-at             document-start
 // @author             BExhei
 // @icon               https://www.google.com/s2/favicons?sz=64&domain=grok.com
 // @match              https://grok.com/*
-// @grant              GM_addStyle
+// @grant              none
 // @license            GPL-3.0
 // @homepageURL        https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro
 // @supportURL         https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro/feedback
-// @downloadURL        https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
-// @updateURL          https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
+// @downloadURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.user.js
+// @updateURL https://update.greasyfork.org/scripts/578827/Grok%20Quota%20Display%20Pro.meta.js
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    function hostWindow() {
+        try {
+            if (typeof unsafeWindow !== 'undefined' && unsafeWindow && unsafeWindow.document) return unsafeWindow;
+        } catch (e) { /* sandbox without page window */ }
+        return window;
+    }
 
     // ─── Model detection from UI (credit: inspired by lqzone's Grok Rate Limit Display) ───
     const MODEL_MAP = {
@@ -183,7 +190,9 @@
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '3.1.0';
+    const VERSION = '3.2.0';
+    const WARM_RETRY_MS = 12000;
+    const WARM_ATTEMPT_MAX = 12;
     const REMOUNT_WATCH_MS = 700;
 
     const LANG = navigator.language.startsWith('zh') ? 'zh' : 'en';
@@ -197,6 +206,8 @@
         4: LANG === 'zh' ? '聊天' : 'Chat',
         5: 'Imagine',
         6: LANG === 'zh' ? '语音' : 'Voice',
+        // Settings → Usage: product.automations
+        8: LANG === 'zh' ? '自动化任务' : 'Automations',
     };
     // Official bar uses one electric blue with stepped opacity (see --fg-electric-blue)
     // #1a5eff ≈ hsl(221 100% 55%)
@@ -222,6 +233,12 @@
         build: LANG === 'zh' ? '构建' : 'Build',
         heavy: LANG === 'zh' ? '重度' : 'Heavy',
         usageTitle: LANG === 'zh' ? '每周用量' : 'Weekly usage',
+        cardToggle: LANG === 'zh' ? '点击展开或收起' : 'Click to expand or collapse',
+        botTitle: LANG === 'zh' ? '每周 Grok Bot 限额' : 'Weekly Grok Bot Limit',
+        botInfo: LANG === 'zh'
+            ? 'Grok Bot 使用单独的每周限额，重置时间独立。'
+            : 'Grok Bot uses a separate weekly limit with its own reset schedule.',
+        botMini: 'Bot',
         usageEmpty: LANG === 'zh' ? '暂无周用量数据' : 'No weekly usage data',
         usageGuest: LANG === 'zh' ? '登录后可查看每周用量' : 'Sign in to view weekly usage',
         usageFree: LANG === 'zh'
@@ -297,11 +314,30 @@
             }
             localStorage.setItem('grokQuotaPos', JSON.stringify({ left: v.left, top: v.top }));
         },
+        cardOpen(key) {
+            try {
+                const raw = JSON.parse(localStorage.getItem('grokQuotaCards') || '{}');
+                return !!(raw && raw[key] === true);
+            } catch (e) { /* ignore */ }
+            return false;
+        },
+        toggleCard(key) {
+            let raw = {};
+            try { raw = JSON.parse(localStorage.getItem('grokQuotaCards') || '{}') || {}; } catch (e) { raw = {}; }
+            raw[key] = !cfg.cardOpen(key);
+            localStorage.setItem('grokQuotaCards', JSON.stringify(raw));
+        },
     };
 
     // ─── State ───
     let cachedWeeklyUsage = null;   // { usagePercent, productUsage, currentPeriod, source }
     let lastWeeklyFetchAt = 0;
+    let cachedBotUsage = null;      // bot.usage result, separate weekly meter
+    let lastBotFetchAt = 0;
+    let botRefreshWanted = false;
+    let botFetchSettled = false;
+    let warmAttempts = 0;
+    let warmRetryTimer = null;
     let cachedResetToken = null;    // { tokenId, validityEnd: Date, availableCount } | null
     let lastResetFetchAt = 0;
     let isRedeemingReset = false;
@@ -671,33 +707,160 @@
         throw lastErr || new Error('redeem failed');
     }
 
+    const CREDIT_PATHS = [
+        '/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig',
+        '/prod_mc_billing.ConsumerUiSvc/GetGrokUsageInfo',
+    ];
+    const PRODUCT_JSON_IDS = {
+        UNSPECIFIED: 0, THIRDPARTY: 0, API: 1, GROKBUILD: 2, BUILD: 2,
+        GROKPLUGINS: 3, PLUGINS: 3, GROKCHAT: 4, CHAT: 4,
+        GROKIMAGINE: 5, IMAGINE: 5, GROKVOICE: 6, VOICE: 6,
+        AUTOMATIONS: 8, GROKAUTOMATIONS: 8,
+    };
+
+    function finiteNum(v) {
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v);
+        return null;
+    }
+
+    function isoFromAny(v) {
+        if (!v) return null;
+        if (typeof v === 'string' || typeof v === 'number') {
+            const d = new Date(v);
+            return Number.isNaN(d.getTime()) ? null : d.toISOString();
+        }
+        if (typeof v === 'object') {
+            const sec = finiteNum(v.seconds);
+            if (sec == null) return null;
+            const nanos = finiteNum(v.nanos) || 0;
+            return new Date(sec * 1000 + nanos / 1e6).toISOString();
+        }
+        return null;
+    }
+
+    function humanizeProduct(raw) {
+        if (typeof raw === 'number') return { product: raw };
+        const text = String(raw || '');
+        const key = text.replace(/^PRODUCT_/, '').replace(/_/g, '').toUpperCase();
+        if (Object.prototype.hasOwnProperty.call(PRODUCT_JSON_IDS, key)) {
+            return { product: PRODUCT_JSON_IDS[key] };
+        }
+        const pretty = text.replace(/^PRODUCT_/, '').replace(/_/g, ' ').replace(/\bGrok\b/ig, '').replace(/\s+/g, ' ').trim();
+        return { product: text, name: pretty || text };
+    }
+
+    function parseCreditsJson(text) {
+        let obj;
+        try { obj = JSON.parse(text); } catch (e) { return null; }
+        if (!obj || typeof obj !== 'object') return null;
+        const cfg = obj.config && typeof obj.config === 'object' ? obj.config : obj;
+        const pct = finiteNum(cfg.creditUsagePercent != null ? cfg.creditUsagePercent : cfg.credit_usage_percent);
+        const period = cfg.currentPeriod || cfg.current_period || {};
+        const rawProducts = cfg.productUsage || cfg.product_usage || [];
+        const productUsage = [];
+        if (Array.isArray(rawProducts)) {
+            for (const entry of rawProducts) {
+                if (!entry || typeof entry !== 'object') continue;
+                const usagePercent = finiteNum(entry.usagePercent != null ? entry.usagePercent : entry.usage_percent);
+                if (usagePercent == null) continue;
+                const named = humanizeProduct(entry.product);
+                productUsage.push({
+                    product: named.product,
+                    name: named.name,
+                    usagePercent: Math.max(0, Math.round(usagePercent)),
+                });
+            }
+        }
+        const end = isoFromAny(period.end) || isoFromAny(cfg.billingPeriodEnd || cfg.billing_period_end);
+        const start = isoFromAny(period.start) || isoFromAny(cfg.billingPeriodStart || cfg.billing_period_start);
+        if (pct == null && productUsage.length === 0 && !end && !start) return null;
+        return {
+            usagePercent: pct == null ? 0 : pct,
+            currentPeriod: { type: 'weekly', start: start, end: end },
+            productUsage,
+        };
+    }
+
+    function isWeeklyCreditsUrl(urlStr) {
+        return typeof urlStr === 'string'
+            && (urlStr.includes('GetGrokCreditsConfig') || urlStr.includes('GetGrokUsageInfo'));
+    }
+
+    async function readCreditsResponse(res) {
+        const grpcStatus = res.headers.get('grpc-status');
+        if (grpcStatus && grpcStatus !== '0') return null;
+        const ctype = (res.headers.get('content-type') || '').toLowerCase();
+        if (ctype.includes('json')) {
+            const text = await res.clone().text().catch(() => '');
+            return parseCreditsJson(text);
+        }
+        const buf = await res.clone().arrayBuffer().catch(() => null);
+        if (!buf) return null;
+        const proto = parseGrpcWebCreditsConfig(buf);
+        if (proto && typeof proto.usagePercent === 'number') return proto;
+        try {
+            const text = new TextDecoder().decode(buf).replace(/^\s+/, '');
+            if (text.startsWith('{')) return parseCreditsJson(text);
+        } catch (e) { /* binary frame */ }
+        return null;
+    }
+
+    function rememberWeekly(parsed, source) {
+        if (!parsed || typeof parsed.usagePercent !== 'number') return false;
+        cachedWeeklyUsage = { ...parsed, source: source || 'api' };
+        lastWeeklyFetchAt = Date.now();
+        bootstrapDone = true;
+        clearStartupRetry();
+        if (getPanel()) {
+            const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
+            const sub = detectSubscription();
+            updateBadge(sub);
+            updateContent({ usage, sub, snap: getModelSnapshot(), timestamp: Date.now(), silent: true });
+        }
+        return true;
+    }
+
     async function fetchGrokCreditsConfig(maxAttempts) {
         if (maxAttempts == null) maxAttempts = 1;
-        const url = window.location.origin + '/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';
-        const init = {
+        const origin = hostWindow().location.origin;
+        const protoInit = {
             method: 'POST',
             credentials: 'include',
             headers: {
                 'content-type': 'application/grpc-web+proto',
-                'connect-protocol-version': '1',
                 'x-grpc-web': '1',
+                'x-user-agent': 'connect-es/2.1.1',
             },
             body: new Uint8Array([0, 0, 0, 0, 0]),
         };
+        const jsonInit = {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'content-type': 'application/json',
+                accept: 'application/json',
+                'connect-protocol-version': '1',
+            },
+            body: '{}',
+        };
         let lastErr = null;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            try {
-                const res = await fetchWithTimeout(url, init, FETCH_TIMEOUT_MS);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const parsed = parseGrpcWebCreditsConfig(await res.arrayBuffer());
-                if (parsed && typeof parsed.usagePercent === 'number') return parsed;
-                lastErr = new Error('empty or unparsable credits config');
-            } catch (e) {
-                lastErr = e;
+            for (const path of CREDIT_PATHS) {
+                const url = origin + path;
+                for (const init of [protoInit, jsonInit]) {
+                    try {
+                        const res = await fetchWithTimeout(url, init, FETCH_TIMEOUT_MS);
+                        if (!res.ok) throw new Error('HTTP ' + res.status);
+                        const parsed = await readCreditsResponse(res);
+                        if (parsed && typeof parsed.usagePercent === 'number') return parsed;
+                        lastErr = new Error('empty credits response');
+                    } catch (e) {
+                        lastErr = e;
+                    }
+                }
             }
-            if (attempt < maxAttempts) {
-                await new Promise(r => setTimeout(r, 350 * attempt));
-            }
+            if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 350 * attempt));
         }
         if (lastErr) throw lastErr;
         return null;
@@ -714,33 +877,193 @@
         return String(isoOrText);
     }
 
-    // Optional: intercept native GetGrokCreditsConfig responses while browsing
+    // ─── Grok Bot weekly limit: JSON-RPC bot.usage on the page's /ws/bot/ socket ───
+    // Settings → Usage renders this as "Weekly Grok Bot Limit", separate from the shared pool.
+    const BOT_WS_PATH = '/ws/bot/';
+    const BOT_REQ_ID_BASE = 880000000;
+    let botReqSeq = 1;
+    const botSockets = new Set();
+    let ownBotSocket = null;
+    let botRelayHookInstalled = false;
+
+    function isBotRelayUrl(url) {
+        try {
+            const u = new URL(String(url), window.location.href);
+            return u.pathname === '/ws/bot' || u.pathname === BOT_WS_PATH || u.pathname.startsWith(BOT_WS_PATH);
+        } catch (e) {
+            return String(url).includes(BOT_WS_PATH);
+        }
+    }
+
+    function looksLikeBotUsage(result) {
+        if (!result || typeof result !== 'object') return false;
+        // bot.usage always carries the period start plus either a meter flag or a percent.
+        return typeof result.currentPeriodStartMs === 'number'
+            && (typeof result.hasNonZeroIncludedLimit === 'boolean'
+                || typeof result.includedLimitZero === 'boolean'
+                || typeof result.usagePercent === 'number');
+    }
+
+    function asEpochMs(n) {
+        if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
+        return n < 1e12 ? n * 1000 : n;
+    }
+
+    function applyBotUsage(result) {
+        if (!looksLikeBotUsage(result)) return;
+        cachedBotUsage = result;
+        lastBotFetchAt = Date.now();
+        botRefreshWanted = false;
+        botFetchSettled = true;
+        if (getPanel() && hasRenderedContent) updateContent({ silent: true });
+    }
+
+    function handleBotFrame(ws, data) {
+        if (typeof data !== 'string') return;
+        let msg;
+        try { msg = JSON.parse(data); } catch (e) { return; }
+        if (!msg || typeof msg !== 'object') return;
+        if (ws.__gqpOwn && msg.method === 'ping') {
+            try { ws.send(JSON.stringify({ method: 'pong', ts_ms: msg.ts_ms || Date.now() })); } catch (e) { /* ignore */ }
+            return;
+        }
+        if (msg.connection_id) {
+            ws.__gqpHello = true;
+            if (!ws.__gqpOwn) retireOwnBotSocket(ws);
+            const stale = !cachedBotUsage || (Date.now() - lastBotFetchAt) >= WEEKLY_REFRESH_MS;
+            if (botRefreshWanted || stale) sendBotUsageReq(ws);
+            return;
+        }
+        if (msg.result && looksLikeBotUsage(msg.result)) applyBotUsage(msg.result);
+    }
+
+    function sendBotUsageReq(ws) {
+        if (!ws || ws.readyState !== 1) return;
+        const id = BOT_REQ_ID_BASE + (botReqSeq++ % 10000000);
+        botRefreshWanted = false;
+        try {
+            ws.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: 'bot.usage', params: {} }));
+        } catch (e) { /* socket may have closed */ }
+    }
+
+    function liveBotSocket() {
+        for (const ws of botSockets) {
+            if (ws.readyState === 1 && !ws.__gqpOwn) return ws;
+        }
+        for (const ws of botSockets) {
+            if (ws.readyState === 1) return ws;
+        }
+        return null;
+    }
+
+    function retireOwnBotSocket(pageWs) {
+        if (!ownBotSocket || ownBotSocket === pageWs) return;
+        try { ownBotSocket.close(); } catch (e) { /* ignore */ }
+        botSockets.delete(ownBotSocket);
+        ownBotSocket = null;
+    }
+
+    function watchBotSocket(ws) {
+        if (!ws || ws.__gqpWatched) return;
+        ws.__gqpWatched = true;
+        botSockets.add(ws);
+        ws.addEventListener('message', (ev) => handleBotFrame(ws, ev.data));
+        ws.addEventListener('close', () => {
+            botSockets.delete(ws);
+            if (ownBotSocket === ws) ownBotSocket = null;
+        });
+        if (!ws.__gqpOwn) retireOwnBotSocket(ws);
+    }
+
+    function openOwnBotSocket(NativeWS) {
+        if ([...botSockets].some(ws => ws.readyState === 0 || ws.readyState === 1)) return;
+        const url = (window.location.protocol === 'https:' ? 'wss://' : 'ws://')
+            + window.location.host + BOT_WS_PATH;
+        let ws;
+        try { ws = new NativeWS(url); } catch (e) { return; }
+        ws.__gqpOwn = true;
+        ownBotSocket = ws;
+        watchBotSocket(ws);
+        ws.addEventListener('open', () => {
+            try { ws.send(JSON.stringify({ protocol_version: '1.0.0', kind: 'bot_client' })); } catch (e) { /* ignore */ }
+            setTimeout(() => {
+                if (ownBotSocket === ws && !ws.__gqpHello) {
+                    try { ws.close(); } catch (err) { /* ignore */ }
+                }
+            }, 12000);
+        });
+    }
+
+    function requestBotUsage(force) {
+        if (force) botRefreshWanted = true;
+        else if (cachedBotUsage && (Date.now() - lastBotFetchAt) < WEEKLY_REFRESH_MS) return;
+        const ws = liveBotSocket();
+        if (ws && ws.__gqpHello) {
+            sendBotUsageReq(ws);
+            return;
+        }
+        const w = hostWindow();
+        if (!ws) openOwnBotSocket(w.__gqpNativeWebSocket || w.WebSocket);
+    }
+
+    function installBotRelayHook() {
+        if (botRelayHookInstalled) return;
+        const w = hostWindow();
+        const NativeWS = w.WebSocket;
+        if (!NativeWS || NativeWS.__gqpPatched) return;
+        botRelayHookInstalled = true;
+        w.__gqpNativeWebSocket = NativeWS;
+        function PatchedWebSocket(url, protocols) {
+            if (!new.target) {
+                throw new TypeError("Failed to construct 'WebSocket': Please use the 'new' operator");
+            }
+            const ws = arguments.length > 1 ? new NativeWS(url, protocols) : new NativeWS(url);
+            try { if (isBotRelayUrl(url)) watchBotSocket(ws); } catch (e) { /* never break the page socket */ }
+            return ws;
+        }
+        PatchedWebSocket.prototype = NativeWS.prototype;
+        PatchedWebSocket.CONNECTING = NativeWS.CONNECTING;
+        PatchedWebSocket.OPEN = NativeWS.OPEN;
+        PatchedWebSocket.CLOSING = NativeWS.CLOSING;
+        PatchedWebSocket.CLOSED = NativeWS.CLOSED;
+        PatchedWebSocket.__gqpPatched = true;
+        w.WebSocket = PatchedWebSocket;
+    }
+
+    function normalizeBotForUi(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        const hasPct = typeof raw.usagePercent === 'number' && Number.isFinite(raw.usagePercent);
+        const excluded = raw.includedLimitZero === true || raw.hasNonZeroIncludedLimit === false;
+        if (excluded && (!hasPct || raw.usagePercent <= 0)) return null;
+        if (!hasPct && raw.hasNonZeroIncludedLimit !== true) return null;
+        const pctRaw = hasPct ? Math.max(0, raw.usagePercent) : 0;
+        const pct = Math.round(pctRaw);
+        const resetMs = asEpochMs(raw.nextResetAtMs);
+        return {
+            percent: pct,
+            remaining: Math.max(0, 100 - Math.min(100, pct)),
+            resetIso: resetMs > 0 ? new Date(resetMs).toISOString() : '',
+            planLabel: raw.planLabel || raw.fundingPlan || '',
+        };
+    }
+
+    installBotRelayHook();
+
+    // Intercept the page's own credits response, and also read it ourselves.
     try {
-        const __origFetch = window.fetch;
-        window.fetch = async function (input, init) {
-            const res = await __origFetch.apply(this, arguments);
+        const page = hostWindow();
+        const __origFetch = page.fetch.bind(page);
+        page.fetch = async function (input, init) {
+            const res = await __origFetch(input, init);
             try {
                 const urlStr = typeof input === 'string' ? input : (input && input.url) || '';
                 if (typeof urlStr === 'string' && res.ok) {
-                    if (urlStr.includes('GetGrokCreditsConfig')) {
-                        const buf = await res.clone().arrayBuffer().catch(() => null);
-                        if (buf) {
-                            const parsed = parseGrpcWebCreditsConfig(buf);
-                            if (parsed && typeof parsed.usagePercent === 'number') {
-                                cachedWeeklyUsage = { ...parsed, source: 'intercepted' };
-                                lastWeeklyFetchAt = Date.now();
-                                bootstrapDone = true;
-                                clearStartupRetry();
-                                if (getPanel()) {
-                                    const usage = normalizeWeeklyForUi(cachedWeeklyUsage);
-                                    const sub = detectSubscription();
-                                    updateBadge(sub);
-                                    updateContent({ usage, sub, snap: getModelSnapshot(), timestamp: Date.now(), silent: true });
-                                    refreshResetToken(false, 1).then(() => {
-                                        if (getPanel() && liveResetToken()) updateContent({ silent: true });
-                                    }).catch(() => {});
-                                }
-                            }
+                    if (isWeeklyCreditsUrl(urlStr)) {
+                        const parsed = await readCreditsResponse(res);
+                        if (rememberWeekly(parsed, 'intercepted')) {
+                            refreshResetToken(false, 1).then(() => {
+                                if (getPanel() && liveResetToken()) updateContent({ silent: true });
+                            }).catch(() => {});
                         }
                     } else if (urlStr.includes('GetRemainingResets')) {
                         const ctype = (res.headers.get('content-type') || '').toLowerCase();
@@ -765,6 +1088,24 @@
             return res;
         };
     } catch (e) { /* ignore */ }
+
+    function quotaStillMissing() {
+        return !cachedWeeklyUsage || !botFetchSettled;
+    }
+
+    function scheduleWarmRetry() {
+        if (warmRetryTimer || !quotaStillMissing() || warmAttempts >= WARM_ATTEMPT_MAX) return;
+        warmRetryTimer = setTimeout(() => {
+            warmRetryTimer = null;
+            warmAttempts += 1;
+            if (!quotaStillMissing()) return;
+            if (document.visibilityState === 'hidden' || !getPanel()) {
+                scheduleWarmRetry();
+                return;
+            }
+            refreshData(true, { silent: true });
+        }, WARM_RETRY_MS);
+    }
 
     // ─── Subscription detection (Lite / SuperGrok / Plus / Heavy) ───
     function pageTextBundle() {
@@ -834,7 +1175,8 @@
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
-            return await fetch(url, { ...options, signal: controller.signal });
+            const w = hostWindow();
+            return await w.fetch.call(w, url, { ...options, signal: controller.signal });
         } finally {
             clearTimeout(timer);
         }
@@ -1011,6 +1353,20 @@
     }
 
     // ─── UI builders ───
+    function productLabel(p) {
+        if (p && p.name) return p.name;
+        const id = p && p.product;
+        if (typeof id === 'number') return PRODUCT_NAMES[id] || ('P' + id);
+        return String(id || '');
+    }
+
+    function cardHead(title, brief, tip) {
+        return `<div class="gqp-sec-head" title="${L.cardToggle}">`
+            + `<span class="gqp-sec-title" title="${tip || ''}">${title}</span>`
+            + `<span class="gqp-sec-brief">${brief}</span>`
+            + `<span class="gqp-chevron" aria-hidden="true"></span></div>`;
+    }
+
     function buildUsageSection(usage, sub) {
         let html = `<div class="gqp-section gqp-usage-sec"><div class="gqp-sec-title">${L.usageTitle}</div>`;
         if (!usage || typeof usage.percent !== 'number') {
@@ -1024,6 +1380,9 @@
         const remaining = usage.remaining != null ? usage.remaining : Math.max(0, 100 - pct);
         const cls = pct >= 90 ? 'c-danger' : pct >= 70 ? 'c-warn' : 'c-ok';
         const remainHint = formatResetRemaining(usage.resetIso);
+        const open = cfg.cardOpen('usage');
+        html = `<div class="gqp-section gqp-usage-sec${open ? '' : ' is-compact'}" data-card="usage">`;
+        html += cardHead(L.usageTitle, `${pct}% ${L.usedLabel}`, '');
 
         html += `<div class="gqp-usage-card">`;
         // Big remaining + used summary (like Grok SuperGrok weekly limit header)
@@ -1043,7 +1402,7 @@
         if (products.length > 0) {
             products.forEach((p, i) => {
                 const alpha = SEGMENT_OPACITIES[Math.min(i, SEGMENT_OPACITIES.length - 1)];
-                const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
+                const name = productLabel(p);
                 const isFirst = i === 0;
                 const isLastUsed = i === products.length - 1 && pct >= 100;
                 let rad = 'gqp-seg-mid';
@@ -1068,7 +1427,7 @@
             products.forEach((p, i) => {
                 const alpha = SEGMENT_OPACITIES[Math.min(i, SEGMENT_OPACITIES.length - 1)];
                 const color = electricBlue(alpha);
-                const name = PRODUCT_NAMES[p.product] || `P${p.product}`;
+                const name = productLabel(p);
                 html += `<div class="gqp-product-item"><span class="gqp-dot" style="background:${color}"></span>`;
                 html += `<span class="gqp-product-name">${name}</span><span class="gqp-product-pct">${p.usagePercent}%</span></div>`;
             });
@@ -1080,6 +1439,52 @@
         if (usage.resetDate || remainHint) {
             html += `<div class="gqp-reset-line">`;
             if (usage.resetDate) html += `<span>${L.resetLabel} ${usage.resetDate}</span>`;
+            if (remainHint) html += `<span class="gqp-reset-eta">${remainHint}</span>`;
+            html += `</div>`;
+        }
+        html += `</div></div>`;
+        return html;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (ch) => ({
+            '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;',
+        }[ch]));
+    }
+
+    function buildBotSection(bot) {
+        if (!bot || typeof bot.percent !== 'number') return '';
+        const pct = bot.percent;
+        const remaining = bot.remaining != null ? bot.remaining : Math.max(0, 100 - Math.min(100, pct));
+        const cls = pct >= 90 ? 'c-danger' : pct >= 70 ? 'c-warn' : 'c-ok';
+        const fill = Math.max(0, Math.min(100, pct));
+        const remainHint = formatResetRemaining(bot.resetIso);
+        const plan = bot.planLabel ? ` · ${escapeHtml(bot.planLabel)}` : '';
+
+        const open = cfg.cardOpen('bot');
+        let html = `<div class="gqp-section gqp-bot-sec${open ? '' : ' is-compact'}" data-card="bot">`;
+        html += cardHead(L.botTitle, `${pct}% ${L.usedLabel}`, L.botInfo);
+        html += `<div class="gqp-usage-card">`;
+        html += `<div class="gqp-usage-hero">`;
+        html += `<div class="gqp-usage-big ${cls}">${remaining}<span class="gqp-usage-unit">%</span></div>`;
+        html += `<div class="gqp-usage-hero-meta">`;
+        html += `<div class="gqp-usage-hero-label">${L.remainLabel}</div>`;
+        html += `<div class="gqp-usage-hero-sub">${pct}% ${L.usedLabel}${plan}</div>`;
+        html += `</div></div>`;
+        html += `<div class="gqp-progress" title="${L.botTitle}: ${pct}% ${L.usedLabel}">`;
+        if (fill > 0) {
+            const rad = fill >= 100 ? 'gqp-seg-only' : 'gqp-seg-start';
+            html += `<div class="gqp-product-seg ${rad}" style="width:${fill}%;background-color:${electricBlue(1)}"></div>`;
+        }
+        if (fill < 100) {
+            const remRad = fill === 0 ? 'gqp-seg-only' : 'gqp-seg-rest';
+            html += `<div class="gqp-progress-rest ${remRad}"></div>`;
+        }
+        html += `</div>`;
+        if (bot.resetIso) {
+            const resetDate = formatPeriodReset(bot.resetIso);
+            html += `<div class="gqp-reset-line">`;
+            if (resetDate) html += `<span>${L.resetLabel} ${resetDate}</span>`;
             if (remainHint) html += `<span class="gqp-reset-eta">${remainHint}</span>`;
             html += `</div>`;
         }
@@ -1260,19 +1665,38 @@
         updateMiniMeter();
     }
 
+    function miniCap(used, label, tip, extraCls) {
+        const cls = used >= 90 ? 'c-danger' : used >= 70 ? 'c-warn' : 'c-ok';
+        const width = Math.max(0, Math.min(100, used));
+        const text = label ? `${label} ${used}%` : `${used}%`;
+        return `<span class="gqp-mini-cap ${cls}${extraCls ? ' ' + extraCls : ''}" title="${tip}"><span class="gqp-mini-fill" style="width:${width}%"></span><span class="gqp-mini-pct">${text}</span></span>`;
+    }
+
     function updateMiniMeter() {
         const el = getPanel()?.querySelector('#gqp-mini');
         if (!el) return;
         const u = lastUiUsage || normalizeWeeklyForUi(cachedWeeklyUsage);
+        const bot = normalizeBotForUi(cachedBotUsage);
+        const hasBot = !!(bot && typeof bot.percent === 'number');
+        el.classList.toggle('gqp-mini-dual', hasBot && !!(u && typeof u.percent === 'number'));
         if (!u || typeof u.percent !== 'number') {
+            if (hasBot) {
+                const tip = `${L.botTitle}: ${bot.percent}% ${L.usedLabel} · ${bot.remaining}% ${L.remainLabel}`;
+                el.innerHTML = miniCap(bot.percent, L.botMini, tip, 'gqp-mini-bot');
+                return;
+            }
             el.innerHTML = `<span class="gqp-mini-cap" title="${L.usageEmpty}"><span class="gqp-mini-pct">—</span></span>`;
             return;
         }
         const used = Math.max(0, Math.min(100, u.percent));
         const rem = u.remaining != null ? u.remaining : Math.max(0, 100 - used);
-        const cls = used >= 90 ? 'c-danger' : used >= 70 ? 'c-warn' : 'c-ok';
         const tip = `${used}% ${L.usedLabel} · ${rem}% ${L.remainLabel}`;
-        el.innerHTML = `<span class="gqp-mini-cap ${cls}" title="${tip}"><span class="gqp-mini-fill" style="width:${used}%"></span><span class="gqp-mini-pct">${used}%</span></span>`;
+        let html = miniCap(used, '', tip, '');
+        if (hasBot) {
+            const botTip = `${L.botTitle}: ${bot.percent}% ${L.usedLabel} · ${bot.remaining}% ${L.remainLabel}`;
+            html += miniCap(bot.percent, L.botMini, botTip, 'gqp-mini-bot');
+        }
+        el.innerHTML = html;
     }
 
     function updateBadge(sub) {
@@ -1318,7 +1742,7 @@
         const m = snap || getModelSnapshot();
 
         // In-place render — never flash a blank loading screen when content exists
-        body.innerHTML = buildUsageSection(u, s) + buildResetSection() + buildModelSection(m, s);
+        body.innerHTML = buildUsageSection(u, s) + buildBotSection(normalizeBotForUi(cachedBotUsage)) + buildResetSection() + buildModelSection(m, s);
         hasRenderedContent = true;
         updateMiniMeter();
         if (timestamp) updateFooter(timestamp);
@@ -1401,6 +1825,7 @@
         if (!p || isRefreshing) return;
         isRefreshing = true;
         setRefreshSpinning(true);
+        requestBotUsage(!!forceWeekly);
 
         const body = p.querySelector('.pbody');
         // Only show loading on first paint when we have nothing to display
@@ -1468,6 +1893,8 @@
         } finally {
             isRefreshing = false;
             setRefreshSpinning(false);
+            if (quotaStillMissing()) scheduleWarmRetry();
+            else warmAttempts = 0;
         }
     }
 
@@ -1695,7 +2122,16 @@
         };
         panel.addEventListener('click', (e) => {
             const btn = e.target && e.target.closest ? e.target.closest('#gqp-redeem') : null;
-            if (btn) handleRedeemReset();
+            if (btn) {
+                handleRedeemReset();
+                return;
+            }
+            const card = e.target && e.target.closest ? e.target.closest('[data-card]') : null;
+            if (!card || !panel.contains(card)) return;
+            const key = card.getAttribute('data-card');
+            if (key !== 'usage' && key !== 'bot') return;
+            cfg.toggleCard(key);
+            updateContent({ silent: true });
         });
         panel.querySelector('#gqp-theme').onclick = (e) => {
             e.preventDefault();
@@ -1838,9 +2274,10 @@
         #${PANEL_ID}.min .badge{display:none}
         #${PANEL_ID}.min .pmini{justify-content:flex-start}
         #${PANEL_ID}.min .gqp-mini-cap{width:100%;max-width:none}
-        #${PANEL_ID} .pmini{display:none;flex:1;align-items:center;justify-content:center;min-width:0}
+        #${PANEL_ID} .pmini{display:none;flex:1;align-items:center;justify-content:center;gap:4px;min-width:0}
         #${PANEL_ID}.min .pmini{display:flex}
         #${PANEL_ID} .gqp-mini-cap{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:20px;padding:0 10px;border-radius:999px;overflow:hidden;background:var(--chip-bg);border:1px solid var(--chip-border)}
+        #${PANEL_ID}.min .pmini.gqp-mini-dual .gqp-mini-cap{width:auto;flex:1;min-width:0;padding:0 6px}
         #${PANEL_ID} .gqp-mini-fill{position:absolute;inset:0 auto 0 0;height:100%;pointer-events:none;opacity:.28;transition:width .3s ease}
         #${PANEL_ID} .gqp-mini-cap.c-ok .gqp-mini-fill{background:var(--ok)}
         #${PANEL_ID} .gqp-mini-cap.c-warn .gqp-mini-fill{background:var(--warn)}
@@ -1857,6 +2294,19 @@
         #${PANEL_ID} .gqp-section{margin-bottom:10px}
         #${PANEL_ID} .gqp-section:last-child{margin-bottom:2px}
         #${PANEL_ID} .gqp-sec-title{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--hint);margin-bottom:7px;padding-left:1px}
+        #${PANEL_ID} .gqp-sec-head{display:flex;align-items:center;gap:8px;margin-bottom:7px;cursor:pointer}
+        #${PANEL_ID} .gqp-sec-head .gqp-sec-title{margin-bottom:0;flex:1;min-width:0}
+        #${PANEL_ID} .gqp-sec-brief{display:none;font-size:11px;font-weight:600;color:var(--sub);font-variant-numeric:tabular-nums;white-space:nowrap}
+        #${PANEL_ID} .is-compact .gqp-sec-brief{display:inline}
+        #${PANEL_ID} .gqp-chevron{width:6px;height:6px;border-right:1.5px solid var(--hint);border-bottom:1.5px solid var(--hint);transform:rotate(-135deg);margin-top:3px;flex-shrink:0}
+        #${PANEL_ID} .is-compact .gqp-chevron{transform:rotate(45deg);margin-top:-2px}
+        #${PANEL_ID} .is-compact .gqp-usage-hero,
+        #${PANEL_ID} .is-compact .gqp-products,
+        #${PANEL_ID} .is-compact .gqp-reset-line,
+        #${PANEL_ID} .is-compact .gqp-usage-card .gqp-hint{display:none}
+        #${PANEL_ID} .is-compact .gqp-progress{height:8px}
+        #${PANEL_ID} .is-compact .gqp-usage-card{padding:0 1px 2px;background:transparent;border-color:transparent}
+        #${PANEL_ID} [data-card]{cursor:pointer}
         #${PANEL_ID} .gqp-hint{font-size:10.5px;color:var(--hint);font-style:italic}
         #${PANEL_ID} .c-ok{color:var(--ok)} #${PANEL_ID} .c-warn{color:var(--warn)} #${PANEL_ID} .c-danger{color:var(--danger)}
 
