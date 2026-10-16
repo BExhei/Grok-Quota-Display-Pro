@@ -1,10 +1,10 @@
 # Grok Quota Display Pro
 
-在 [grok.com](https://grok.com) 右下角显示 **每周用量**、**一键重置额度**，以及当前模型（**自动 / 快速 / 专家 / 构建 / 重度**）。适用于 Tampermonkey / Violentmonkey。
+在 [grok.com](https://grok.com) 右下角显示 **每周用量**、**每周 Grok Bot 限额**、**一键重置额度**，以及当前模型（**自动 / 快速 / 专家 / 构建 / 重度**）。适用于 Tampermonkey / Violentmonkey。
 
-A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage**, **one-click usage-limit reset**, and **current model** chips for **Auto / Fast / Expert / Build / Heavy**. SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy.
+A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage**, a separate **weekly Grok Bot limit**, **one-click usage-limit reset**, and **current model** chips for **Auto / Fast / Expert / Build / Heavy**. SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy.
 
-[![Version](https://img.shields.io/badge/version-3.1.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue)](.)
 [![Language](https://img.shields.io/badge/language-zh--CN%20%7C%20zh--TW%20%7C%20en-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
@@ -18,12 +18,15 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ## 中文
 
-### 3.1.0 更新
+### 3.2.0 更新
 
-- **当前模型**增加 **构建 (Build)**，芯片顺序：自动 · 快速 · 专家 · **构建** · 重度
-- 浮窗挂在 `<html>` 的 Shadow DOM 上，避免 grok.com React 二次渲染把面板冲掉
-- 拖拽移动外层固定宿主，位置会记住；点击、拖拽、刷新不再让窗口消失
-- 脚本名称 / 简介支持简体、繁体、英文（`zh` / `zh-CN` / `zh-HK` / `zh-SG` / `zh-TW` / `en`）
+- 新增 **每周 Grok Bot 限额** 进度条，和每周共享用量分开，各自有重置时间
+- 两条额度在后台读取，不用先打开 **设置 → 用量**
+- 两条额度卡片 **默认折叠**；点击展开或收起，状态会记住
+- 折叠时只留标题、已用百分比和细进度条；展开后是大号剩余 %、分类明细和重置时间
+- 分类明细中的额度项与设置弹窗一致，其中包括 **自动化任务**（英文 **Automations**）
+- 最小化时同时显示每周已用 % 和 Bot 已用 %
+- **当前模型**包含 **构建 (Build)**，芯片顺序：自动 · 快速 · 专家 · **构建** · 重度
 
 ### 套餐
 
@@ -37,11 +40,18 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ### 每周用量
 
-- 有每周池的套餐通过 `GetGrokCreditsConfig`（grpc-web / protobuf）拉取数据
-- 大号 **剩余 %** + 已用 %
+- 有每周池的套餐通过 `GetGrokCreditsConfig`（grpc-web / protobuf，并兼容 JSON）在后台拉取，不必先打开设置页
+- 卡片默认折叠：标题、已用 %、细进度条
+- 展开后：大号 **剩余 %** + 已用 %、分类明细、重置时间 + 相对倒计时
 - 进度条对齐官方样式：`flex` + `gap-px`，电光蓝（`#1a5eff` / 透明度 `1 → 0.7 → 0.45…`），未用段 `flex-1`
-- 分类明细（聊天 / Imagine / API / Grok Build / 语音 / 插件 / …）
-- 重置时间 + 相对倒计时
+- 分类名称与设置弹窗一致（聊天 / Imagine / API / Grok Build / 语音 / 插件 / **自动化任务** / …）
+
+### 每周 Grok Bot 限额
+
+- 与每周共享用量分开，重置时间独立
+- 同一套折叠 / 展开，状态单独记住
+- 套餐不含该限额时不显示这条
+- 数据来自页面同一条 `bot.usage`
 
 ### 用量限额重置
 
@@ -59,7 +69,7 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 ### 最小化
 
 - 收起展开卡片和套餐徽章
-- 左侧紧凑 **已用 %** 胶囊（与官方用量条同义）
+- 左侧紧凑 **已用 %** 胶囊；有 Grok Bot 限额时并排再显示一枚 **Bot** 胶囊
 - 数字和半透明填充都表示已用（例如已用 63% → 显示 `63%` 且填充 63%）
 - 悬停仍显示已用 + 剩余
 - 按用量阶段变色（正常 / 警告 / 危险）
@@ -83,7 +93,8 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 | 区块 | 内容 |
 |------|------|
-| **每周用量** | 剩余 / 已用 %、分段条、分类、重置时间 |
+| **每周用量** | 默认折叠；展开后为剩余 / 已用 %、分段条、分类、重置时间 |
+| **每周 Grok Bot 限额** | 独立进度条和重置时间；默认折叠，状态单独记住 |
 | **用量限额重置** | 重置可用卡片 + 兑换（先确认） |
 | **当前模型** | 自动 / 快速 / 专家 / 构建 / 重度 |
 | **套餐徽章** | SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy 等 |
@@ -95,12 +106,12 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 2. 从 [Greasy Fork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro) 安装，或把 `grok-quota-display-pro.js` 粘进新脚本。
 3. 登录后打开 https://grok.com ，面板出现在右下角。
 
-**说明**：每周池数字出现在 **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**。免费账户仍有面板和模型芯片，并有明确的免费套餐提示。付费数据为空时，点 ⟳ 或打开 **设置 → 用量**。
+**说明**：每周池数字出现在 **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**。免费账户仍有面板和模型芯片，并有明确的免费套餐提示。登录后额度会在后台读出；暂时为空时点 ⟳。
 
 ### 使用
 
 1. 打开 [grok.com](https://grok.com)。
-2. 面板显示套餐徽章、每周用量、重置（如有）和当前模型。
+2. 面板显示套餐徽章、每周用量、Grok Bot 限额（如有）、重置（如有）和当前模型。两条额度默认折叠，点击卡片可展开。
 3. 在 Grok 选择器里换模型，芯片会本地更新，不闪网络加载。
 4. 有重置时点 **兑换** 并确认，即可清空本周用量。
 5. 拖标题栏移动；可切换主题 / 最小化。最小化是紧凑的 **已用 %** 胶囊。
@@ -115,7 +126,18 @@ content-type: application/grpc-web+proto
 x-grpc-web: 1
 ```
 
-解析 `usagePercent`、`productUsage[]`、`currentPeriod.start/end`。
+解析 `usagePercent`、`productUsage[]`（含自动化任务 / Automations）、`currentPeriod.start/end`。
+
+同一数据也会尝试 `POST /prod_mc_billing.ConsumerUiSvc/GetGrokUsageInfo`。
+
+#### 每周 Grok Bot 限额
+
+```
+WebSocket /ws/bot/
+JSON-RPC method: bot.usage
+```
+
+读取 `usagePercent` 和 `nextResetAtMs`。与每周共享池分开。
 
 #### 用量限额重置 API
 
@@ -133,10 +155,10 @@ x-grpc-web: 1
 | 触发 | 行为 |
 |------|------|
 | 首次打开 | 启动：等待加载 + 多次重试 |
-| 每 5 分钟 | 静默刷新每周用量 + 重置 token（标签页可见时） |
+| 每 5 分钟 | 静默刷新每周用量、Grok Bot 限额 + 重置 token（标签页可见时） |
 | 切换模型 | 仅本地更新芯片 |
 | 发送后 | 约 4 秒后静默强制刷新 |
-| 手动 ⟳ | 强制拉取每周用量 + 重置 |
+| 手动 ⟳ | 强制拉取每周用量、Grok Bot 限额 + 重置 |
 | 兑换 | 确认 → RedeemReset → 刷新每周用量 |
 | 标签页隐藏 | 暂停轮询 |
 
@@ -160,12 +182,15 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 ## English
 
-### What's New (v3.1.0)
+### What's New (v3.2.0)
 
-- **Current model** chips now include **Build**, in order: Auto · Fast · Expert · **Build** · Heavy
-- Panel lives in a Shadow DOM host on `<html>`, so React remounts on grok.com no longer wipe the floating window
-- Drag moves the fixed host (position is saved); click / drag / refresh no longer make the panel vanish
-- Script name / description localized for Simplified Chinese, Traditional Chinese, and English (`zh` / `zh-CN` / `zh-HK` / `zh-SG` / `zh-TW` / `en`)
+- New **weekly Grok Bot limit** bar, separate from the shared weekly pool, with its own reset time
+- Both quotas load in the background — no need to open **Settings → Usage** first
+- Both quota cards start **collapsed**; click to expand or collapse, and the choice is remembered
+- Collapsed: title, used %, and a thin bar. Expanded: large remaining %, breakdown, and reset time
+- Product names match the settings dialog, including **Automations** (中文 **自动化任务**)
+- Minimized header shows weekly used % and Bot used % together
+- **Current model** chips include **Build**, in order: Auto · Fast · Expert · **Build** · Heavy
 
 ### Tiers
 
@@ -179,11 +204,18 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 ### Weekly usage
 
-- Fetches data via `GetGrokCreditsConfig` (grpc-web / protobuf) when the plan has a weekly pool
-- Large **remaining %** + used %
+- Plans with a weekly pool are fetched in the background via `GetGrokCreditsConfig` (grpc-web / protobuf, with a JSON fallback). Opening Settings is not required
+- Cards start collapsed: title, used %, thin bar
+- Expanded: large **remaining %** + used %, product breakdown, reset time + relative countdown
 - Progress bar matches official markup: `flex` + `gap-px`, **electric blue** (`#1a5eff` / opacity steps `1 → 0.7 → 0.45…`), unused track `flex-1`
-- Product breakdown (Chat / Imagine / API / Grok Build / Voice / Plugins / …)
-- Reset time + relative countdown
+- Product names match Settings → Usage (Chat / Imagine / API / Grok Build / Voice / Plugins / **Automations** / …)
+
+### Weekly Grok Bot limit
+
+- Separate from the shared weekly pool, with its own reset time
+- Same collapse / expand control, remembered on its own
+- Hidden when the plan has no Bot allowance
+- Reads the same `bot.usage` call the page uses
 
 ### Usage-limit reset
 
@@ -201,7 +233,7 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 ### Minimized mode
 
 - Hides the expanded card and tier badge
-- Compact **used-%** capsule on the left (same meaning as the official usage bar)
+- Compact **used-%** capsule on the left; a second **Bot** capsule appears when a Grok Bot limit is present
 - Number and translucent fill both show **used** (e.g. 63% used → `63%` and a 63% fill)
 - Hover tooltip still lists used + remaining
 - Fill and text change color by usage stage (ok / warn / danger)
@@ -225,7 +257,8 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 | Section | Content |
 |--------|---------|
-| **Weekly usage** | Remaining / used %, segmented bar, categories, reset time |
+| **Weekly usage** | Collapsed by default; expanded view has remaining / used %, segmented bar, categories, reset time |
+| **Weekly Grok Bot limit** | Separate bar and reset time; collapsed by default, state remembered on its own |
 | **Usage-limit reset** | Reset Available card + Redeem (confirm first) |
 | **Current model** | Auto / Fast / Expert / Build / Heavy chips |
 | **Tier badge** | SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy, etc. |
@@ -237,12 +270,12 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 2. Install from [Greasy Fork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro), or copy `grok-quota-display-pro.js` into a new userscript.
 3. Open https://grok.com while logged in — the panel appears bottom-right.
 
-**Tip**: Weekly pool numbers appear on **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**. Free accounts still get the panel and model chips, with a clear free-tier message. If paid data is empty, click ⟳ or open **Settings → Usage**.
+**Tip**: Weekly pool numbers appear on **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**. Free accounts still get the panel and model chips, with a clear free-tier message. Quotas load in the background after sign-in. If a number is still empty, click ⟳.
 
 ### Usage
 
 1. Open [grok.com](https://grok.com).
-2. Panel shows tier badge, weekly usage, reset (if available), and current model.
+2. Panel shows tier badge, weekly usage, the Grok Bot limit (when the plan has one), reset (if available), and current model. Both quota cards start collapsed; click a card to expand it.
 3. Switch model in Grok’s selector — chips update without a network flash.
 4. If a reset is available, click **Redeem** and confirm to clear this week’s pool.
 5. Drag the header to move; use theme / minimize as needed. Minimized view is a compact **used-%** capsule aligned with the official usage bar.
@@ -257,7 +290,18 @@ content-type: application/grpc-web+proto
 x-grpc-web: 1
 ```
 
-Parses `usagePercent`, `productUsage[]`, `currentPeriod.start/end`.
+Parses `usagePercent`, `productUsage[]` (including Automations), `currentPeriod.start/end`.
+
+The same data is also tried at `POST /prod_mc_billing.ConsumerUiSvc/GetGrokUsageInfo`.
+
+#### Weekly Grok Bot limit
+
+```
+WebSocket /ws/bot/
+JSON-RPC method: bot.usage
+```
+
+Reads `usagePercent` and `nextResetAtMs`. This pool is separate from the shared weekly pool.
 
 #### Usage-limit reset API
 
@@ -275,10 +319,10 @@ Reads remaining reset tokens (`tokenId`, `validityEnd`) and redeems with confirm
 | Trigger | Behavior |
 |--------|----------|
 | First open | Bootstrap: load wait + multi-retry |
-| Every 5 min | Silent weekly + reset-token refresh (tab visible) |
+| Every 5 min | Silent weekly, Grok Bot limit, and reset-token refresh (tab visible) |
 | Model change | Local chip update only |
 | After send | Silent force refresh ~4s |
-| Manual ⟳ | Force weekly + reset fetch |
+| Manual ⟳ | Force weekly, Grok Bot limit, and reset fetch |
 | Redeem | Confirm → RedeemReset → refresh weekly usage |
 | Tab hidden | Polling paused |
 
