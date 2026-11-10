@@ -7,7 +7,7 @@
 // @name:zh-SG         Grok 用量显示 Pro
 // @name:zh-TW         Grok 用量顯示 Pro
 // @namespace          https://github.com/BExhei/Grok-Quota-Display-Pro
-// @version            3.2.0
+// @version            3.2.4
 // @description        Grok weekly usage + Grok Bot weekly limit + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
 // @description:en     Grok weekly usage + Grok Bot weekly limit + one-click usage-limit reset + model chips for Auto / Fast / Expert / Build / Heavy; silent refresh
 // @description:zh     显示 Grok 每周用量和 Grok Bot 每周限额，支持一键重置额度，并标注当前模型（自动 / 快速 / 专家 / 构建 / 重度）
@@ -55,6 +55,10 @@
         "Build Mode": "grok-build",
         "构建": "grok-build",
         "构建模式": "grok-build",
+        "快速": "grok-3",
+        "自动": "grok-4-auto",
+        "专家": "grok-4",
+        "重度": "grok-4-heavy",
         "Grok 4 Fast": "grok-4-mini-thinking-tahoe",
         "Grok 4.1": "grok-4-1-non-thinking-w-tool",
         "Grok 4.1 Thinking": "grok-4-1-thinking-1129",
@@ -82,56 +86,95 @@
     };
 
     const QUERY_BAR_SELECTOR = ".query-bar";
-    const MODEL_SELECTOR = "button[aria-label='Model select']";
+    const MODEL_SELECTOR = "button[aria-label='Model select'], #model-select-trigger";
     const MODEL_SELECT_ARIA_LABELS = new Set(["Model select", "模型选择"]);
 
+    function isModelSelectAria(aria) {
+        const label = (aria || '').replace(/\s+/g, ' ').trim();
+        if (!label) return false;
+        if (MODEL_SELECT_ARIA_LABELS.has(label)) return true;
+        // New composer: aria-label is "Model: Fast" / "模型: 构建", not "Model select".
+        return /^(?:model|模型)\b/i.test(label);
+    }
+
+    function modelNameFromLabel(raw) {
+        const text = (raw || '').replace(/\s+/g, ' ').trim();
+        if (!text) return null;
+        const named = text.match(/^(?:model|模型)\s*[:：]\s*(.+)$/i);
+        const label = (named ? named[1] : text).trim();
+        if (MODEL_MAP[label]) return MODEL_MAP[label];
+        if (/^(build|grok build|build mode|构建|构建模式|grok\s*构建)$/i.test(label)) return 'grok-build';
+        if (/^(fast|快速)$/i.test(label)) return 'grok-3';
+        if (/^(auto|自动)$/i.test(label)) return 'grok-4-auto';
+        if (/^(expert|专家)$/i.test(label)) return 'grok-4';
+        if (/^(heavy|重度)$/i.test(label)) return 'grok-4-heavy';
+        return null;
+    }
+
+    function labelsOf(el) {
+        if (!el) return [];
+        const out = [];
+        const aria = el.getAttribute && el.getAttribute('aria-label');
+        if (aria) out.push(aria);
+        if (el.querySelector) {
+            const span = el.querySelector('span.font-semibold, span.truncate');
+            if (span && span.textContent) out.push(span.textContent);
+        }
+        return out;
+    }
+
+    function isVisible(el) {
+        if (!el || typeof el.getClientRects !== 'function' || !el.getClientRects().length) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+    }
+
     function findModelButton(queryBar) {
-        const directMatch = queryBar.querySelector(MODEL_SELECTOR);
-        if (directMatch) return directMatch;
-        const buttons = Array.from(queryBar.querySelectorAll('button'));
-        return buttons.find(b => MODEL_SELECT_ARIA_LABELS.has(b.getAttribute('aria-label'))) || null;
+        const seen = new Set();
+        const nodes = [];
+        const pushAll = (root) => {
+            if (!root || !root.querySelectorAll) return;
+            root.querySelectorAll('#model-select-trigger, button[aria-label]').forEach((el) => {
+                if (seen.has(el)) return;
+                if (el.id !== 'model-select-trigger' && !isModelSelectAria(el.getAttribute('aria-label'))) return;
+                seen.add(el);
+                nodes.push(el);
+            });
+        };
+        if (queryBar) pushAll(queryBar);
+        pushAll(document);
+        const visible = nodes.filter(isVisible);
+        const pool = visible.length ? visible : nodes;
+        // A hidden Fast trigger often sits earlier in the DOM than the visible Build trigger.
+        const buildHit = pool.find((el) => labelsOf(el).some((label) => modelNameFromLabel(label) === 'grok-build'));
+        return buildHit || pool[0] || null;
     }
 
     function getCurrentModelName(queryBar) {
-        if (!queryBar) return "grok-3";
         const modelButton = findModelButton(queryBar);
-        if (!modelButton) return "grok-3";
-
-        function resolveModelLabel(raw) {
-            const t = (raw || '').replace(/\s+/g, ' ').trim();
-            if (!t) return null;
-            if (MODEL_MAP[t]) return MODEL_MAP[t];
-            if (/^(build|grok build|build mode|构建|构建模式)$/i.test(t)) return 'grok-build';
-            return null;
+        const scanRoot = (queryBar && queryBar.querySelectorAll)
+            ? queryBar
+            : (modelButton && modelButton.closest && (modelButton.closest('.query-bar, form') || modelButton.parentElement));
+        if (scanRoot && scanRoot.querySelectorAll) {
+            for (const el of scanRoot.querySelectorAll('button, [role="radio"], [role="menuitemradio"]')) {
+                const on = el === modelButton
+                    || el.getAttribute('aria-pressed') === 'true'
+                    || el.getAttribute('aria-checked') === 'true'
+                    || el.getAttribute('data-state') === 'on'
+                    || el.getAttribute('data-state') === 'checked';
+                if (!on) continue;
+                if (labelsOf(el).some((label) => modelNameFromLabel(label) === 'grok-build')) return 'grok-build';
+            }
         }
-
-        // Check text span first
-        const textEl = modelButton.querySelector('span.font-semibold');
-        if (textEl) {
-            const mapped = resolveModelLabel(textEl.textContent);
-            if (mapped) return mapped;
-        }
-        // Fallback to old chooser text
-        const oldText = modelButton.querySelector('span.inline-block');
-        if (oldText) {
-            const mapped = resolveModelLabel(oldText.textContent);
+        if (!modelButton) return 'grok-3';
+        for (const label of labelsOf(modelButton)) {
+            const mapped = modelNameFromLabel(label);
             if (mapped) return mapped;
         }
         const shortText = (modelButton.textContent || '').replace(/\s+/g, ' ').trim();
         if (shortText.length <= 24) {
-            const mappedShort = resolveModelLabel(shortText);
+            const mappedShort = modelNameFromLabel(shortText);
             if (mappedShort) return mappedShort;
-        }
-        for (const btn of queryBar.querySelectorAll('button')) {
-            const aria = (btn.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-            const text = (btn.textContent || '').replace(/\s+/g, ' ').trim();
-            const isBuild = /^(build|grok build|build mode|构建|构建模式)$/i.test(aria)
-                || (text.length <= 16 && /^(build|grok build|build mode|构建|构建模式)$/i.test(text));
-            if (!isBuild) continue;
-            const on = btn.getAttribute('aria-pressed') === 'true'
-                || btn.getAttribute('aria-selected') === 'true'
-                || btn.getAttribute('data-state') === 'on';
-            if (btn === modelButton || on) return 'grok-build';
         }
         // SVG path matching
         const svg = modelButton.querySelector('svg');
@@ -151,7 +194,7 @@
 
     // ─── requestKind detection for grok-3 (Think / DeepSearch) ───
     function detectRequestKind(queryBar, modelName) {
-        if (modelName !== 'grok-3') return 'DEFAULT';
+        if (modelName !== 'grok-3' || !queryBar || !queryBar.querySelectorAll) return 'DEFAULT';
         // Find Think button by SVG path
         const buttons = queryBar.querySelectorAll('button');
         let thinkPressed = false;
@@ -178,7 +221,11 @@
     }
 
     function getQueryBar() {
-        return document.querySelector(QUERY_BAR_SELECTOR);
+        const direct = document.querySelector(QUERY_BAR_SELECTOR);
+        if (direct) return direct;
+        const anchor = document.querySelector('#model-select-trigger, [data-query-bar-mode-select], .query-bar-editor');
+        if (!anchor) return null;
+        return anchor.closest('.query-bar, form') || anchor.parentElement || anchor;
     }
 
     // ─── Constants ───
@@ -190,7 +237,7 @@
     // First open: page/session often not ready — wait + retry before giving up
     const STARTUP_DELAY_MS = 1200;
     const STARTUP_RETRY_DELAYS_MS = [0, 700, 1500, 2800, 4500];
-    const VERSION = '3.2.0';
+    const VERSION = '3.2.4';
     const WARM_RETRY_MS = 12000;
     const WARM_ATTEMPT_MAX = 12;
     const REMOUNT_WATCH_MS = 700;
@@ -278,7 +325,7 @@
         unknownModel: LANG === 'zh' ? '未知' : 'Unknown',
     };
 
-    /** Tier ids: guest | free | premium | lite | super | plus | heavy */
+    /** Tier ids: guest | free | premium | lite | super | plus | heavy | xplus | xpremium | xsuper | xultra */
     const TIER = {
         guest:  { id: 'guest',   tier: () => L.guest,           color: '#6b7280', canUseHeavy: false, hasWeeklyPool: false },
         free:   { id: 'free',    tier: () => L.free,            color: '#4b5563', canUseHeavy: false, hasWeeklyPool: false },
@@ -287,6 +334,11 @@
         super:  { id: 'super',   tier: () => 'SuperGrok',       color: '#047857', canUseHeavy: false, hasWeeklyPool: true },
         plus:   { id: 'plus',    tier: () => 'SuperGrok Plus',  color: '#4f46e5', canUseHeavy: false, hasWeeklyPool: true },
         heavy:  { id: 'heavy',   tier: () => 'SuperGrok Heavy', color: '#b45309', canUseHeavy: true,  hasWeeklyPool: true },
+        // 终极 AI 订阅的四档。接口 id 仍是 supergrok.lite / supergrok / supergrok.plus / supergrok.heavy。
+        xplus:    { id: 'xplus',    tier: () => 'Plus',    color: '#0f766e', canUseHeavy: false, hasWeeklyPool: true },
+        xpremium: { id: 'xpremium', tier: () => 'Premium', color: '#047857', canUseHeavy: false, hasWeeklyPool: true },
+        xsuper:   { id: 'xsuper',   tier: () => 'Super',   color: '#4f46e5', canUseHeavy: false, hasWeeklyPool: true },
+        xultra:   { id: 'xultra',   tier: () => 'Ultra',   color: '#6d28d9', canUseHeavy: true,  hasWeeklyPool: true },
     };
     function makeTier(key) {
         const t = TIER[key] || TIER.free;
@@ -338,6 +390,8 @@
     let botFetchSettled = false;
     let warmAttempts = 0;
     let warmRetryTimer = null;
+    let cachedProfileTier = null;  // plan profile: old or new, display name wins
+    let cachedLegacyTier = null;   // /rest/subscriptions tier enum, old names only
     let cachedResetToken = null;    // { tokenId, validityEnd: Date, availableCount } | null
     let lastResetFetchAt = 0;
     let isRedeemingReset = false;
@@ -1065,6 +1119,13 @@
                                 if (getPanel() && liveResetToken()) updateContent({ silent: true });
                             }).catch(() => {});
                         }
+                    } else if (isPlanProfileUrl(urlStr) || isSubscriptionsListUrl(urlStr)) {
+                        const txt = await res.clone().text().catch(() => '');
+                        try {
+                            const obj = JSON.parse(txt);
+                            if (isPlanProfileUrl(urlStr)) rememberPlan('profile', tierFromPlanProfile(obj));
+                            else rememberPlan('legacy', tierFromSubscriptions(obj));
+                        } catch (e) { /* not the list payload */ }
                     } else if (urlStr.includes('GetRemainingResets')) {
                         const ctype = (res.headers.get('content-type') || '').toLowerCase();
                         let parsed = null;
@@ -1107,7 +1168,174 @@
         }, WARM_RETRY_MS);
     }
 
-    // ─── Subscription detection (Lite / SuperGrok / Plus / Heavy) ───
+    // ─── Subscription detection ───
+    // Old and new plans share some internal ids, so names are never cross-mapped.
+    // Old: SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy.
+    // New (终极 AI 订阅): Plus / Premium / Super / Ultra.
+    const OLD_PLAN_RANK = { lite: 1, super: 2, plus: 3, heavy: 4 };
+    const NEW_PLAN_RANK = { xplus: 1, xpremium: 2, xsuper: 3, xultra: 4 };
+    const OLD_PLAN_IDS = {
+        'supergrok.lite': 'lite',
+        supergrok_lite: 'lite',
+        subscription_tier_super_grok_lite: 'lite',
+        tier_supergrok_lite: 'lite',
+        'supergrok.plus': 'plus',
+        supergrok_plus: 'plus',
+        subscription_tier_super_grok_plus: 'plus',
+        'supergrok.heavy': 'heavy',
+        supergrok_heavy: 'heavy',
+        subscription_tier_super_grok_pro: 'heavy',
+        tier_supergrok_heavy: 'heavy',
+        supergrok: 'super',
+        subscription_tier_grok_pro: 'super',
+        tier_supergrok: 'super',
+    };
+    const NEW_PLAN_IDS = {
+        plus: 'xplus',
+        premium: 'xpremium',
+        super: 'xsuper',
+        ultra: 'xultra',
+    };
+
+    function normalizePlanId(raw) {
+        return String(raw || '').trim().toLowerCase().replace(/-/g, '_');
+    }
+
+    function tierFromPlanId(raw) {
+        const id = normalizePlanId(raw);
+        if (!id) return null;
+        if (Object.prototype.hasOwnProperty.call(NEW_PLAN_IDS, id)) return NEW_PLAN_IDS[id];
+        if (Object.prototype.hasOwnProperty.call(OLD_PLAN_IDS, id)) return OLD_PLAN_IDS[id];
+        return null;
+    }
+
+    function tierFromDisplayName(raw) {
+        const name = String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!name) return null;
+        if (name === 'supergrok lite' || name === 'supergrok-lite') return 'lite';
+        if (name === 'supergrok plus' || name === 'supergrok-plus') return 'plus';
+        if (name === 'supergrok heavy' || name === 'supergrok pro' || name === 'supergrok-heavy') return 'heavy';
+        if (name === 'supergrok') return 'super';
+        if (name === 'plus') return 'xplus';
+        if (name === 'premium') return 'xpremium';
+        if (name === 'super') return 'xsuper';
+        if (name === 'ultra') return 'xultra';
+        return null;
+    }
+
+    function highestInFamily(ids) {
+        let family = null;
+        let best = null;
+        let rank = 0;
+        for (const id of ids) {
+            const key = tierFromPlanId(id);
+            if (!key) continue;
+            const nextFamily = NEW_PLAN_RANK[key] ? 'new' : 'old';
+            const nextRank = NEW_PLAN_RANK[key] || OLD_PLAN_RANK[key] || 0;
+            if (family && nextFamily !== family) return null;
+            family = nextFamily;
+            if (!best || nextRank > rank) {
+                best = key;
+                rank = nextRank;
+            }
+        }
+        return best;
+    }
+
+    function isSubscriptionsListUrl(urlStr) {
+        return /\/rest\/subscriptions(?:\?|$)/.test(urlStr);
+    }
+
+    function isPlanProfileUrl(urlStr) {
+        return urlStr.includes('/rest/plan/profile');
+    }
+
+    function surfaceDisplayList(surfaceNames) {
+        if (!surfaceNames) return null;
+        if (Array.isArray(surfaceNames)) return surfaceNames;
+        if (Array.isArray(surfaceNames.SURFACE_DISPLAY)) return surfaceNames.SURFACE_DISPLAY;
+        if (typeof surfaceNames.SURFACE_DISPLAY === 'string') return [surfaceNames.SURFACE_DISPLAY];
+        return null;
+    }
+
+    function tierFromDisplayList(list) {
+        const names = Array.isArray(list) ? list : [list];
+        for (const name of names) {
+            const key = tierFromDisplayName(name);
+            if (key) return key;
+        }
+        return null;
+    }
+
+    function tierFromSubscriptions(obj) {
+        const list = obj && (obj.subscriptions || (Array.isArray(obj) ? obj : null));
+        if (!Array.isArray(list)) return null;
+        const active = list.filter((s) => {
+            const status = String((s && s.status) || '').toUpperCase();
+            return status === 'SUBSCRIPTION_STATUS_ACTIVE' || status === 'ACTIVE';
+        });
+        return highestInFamily(active.map((s) => s && s.tier));
+    }
+
+    function tierFromPlanProfile(obj) {
+        const profile = obj && (obj.profile || obj);
+        if (!profile || typeof profile !== 'object') return null;
+        const dominant = profile.dominantPlan;
+        const held = Array.isArray(profile.heldPlanSurfaces)
+            ? profile.heldPlanSurfaces.find((s) => s && (s.plan === dominant || s.planId === dominant))
+            : null;
+        const fromHeld = tierFromDisplayList(surfaceDisplayList(held && held.surfaceNames));
+        if (fromHeld) return fromHeld;
+        if (profile.dominantPlan && profile.surfaceNames) {
+            const fromTop = tierFromDisplayList(surfaceDisplayList(profile.surfaceNames));
+            if (fromTop) return fromTop;
+        }
+        const fromDominant = tierFromPlanId(dominant);
+        if (fromDominant) return fromDominant;
+        const closure = Array.isArray(profile.planClosure) ? profile.planClosure : [];
+        return highestInFamily(closure);
+    }
+
+    function resolvedPlanKey() {
+        return cachedProfileTier || cachedLegacyTier || null;
+    }
+
+    function rememberPlan(slot, key) {
+        if (!key || !TIER[key]) return false;
+        const prev = resolvedPlanKey();
+        if (slot === 'profile') cachedProfileTier = key;
+        else cachedLegacyTier = key;
+        const next = resolvedPlanKey();
+        if (next !== prev && getPanel()) {
+            const sub = makeTier(next);
+            updateBadge(sub);
+            if (hasRenderedContent) updateContent({ sub, silent: true });
+        }
+        return true;
+    }
+
+    async function fetchXPlanTier() {
+        const origin = hostWindow().location.origin;
+        const headers = { accept: 'application/json' };
+        try {
+            const res = await fetchWithTimeout(origin + '/rest/plan/profile', {
+                method: 'GET',
+                credentials: 'include',
+                headers,
+            }, FETCH_TIMEOUT_MS);
+            if (res.ok) rememberPlan('profile', tierFromPlanProfile(await res.json()));
+        } catch (e) { /* keep the previous profile tier */ }
+        try {
+            const res = await fetchWithTimeout(origin + '/rest/subscriptions', {
+                method: 'GET',
+                credentials: 'include',
+                headers,
+            }, FETCH_TIMEOUT_MS);
+            if (res.ok) rememberPlan('legacy', tierFromSubscriptions(await res.json()));
+        } catch (e) { /* keep the previous subscription tier */ }
+        return resolvedPlanKey();
+    }
+
     function pageTextBundle() {
         const fullText = (document.body?.innerText || '').toLowerCase();
         const headerEl = document.querySelector('header, nav, [class*="header"], [data-testid*="top"]');
@@ -1123,7 +1351,7 @@
             if (!loginBtn) return false;
             const { blob } = pageTextBundle();
             // Logged-in Free still has no SuperGrok string; guest usually has sign-in CTA
-            if (/supergrok|sign\s*out|log\s*out|账户|退出/.test(blob)) return false;
+            if (/supergrok|终极\s*ai\s*订阅|ultimate\s+ai\s+subscription|sign\s*out|log\s*out|账户|退出/.test(blob)) return false;
             return true;
         } catch {
             return false;
@@ -1141,6 +1369,9 @@
 
     function detectSubscription() {
         try {
+            // Account API wins. Page text still only names the old SuperGrok plans.
+            const planKey = resolvedPlanKey();
+            if (planKey && TIER[planKey]) return makeTier(planKey);
             const { fullText, headerText, blob } = pageTextBundle();
             const fromHeader = matchSuperGrokTier(headerText);
             if (fromHeader) return makeTier(fromHeader);
@@ -1307,11 +1538,20 @@
 
     // ─── Model detection snapshot (local only, no network) ───
     function getModelSnapshot() {
-        const queryBar = getQueryBar();
-        const modelName = getCurrentModelName(queryBar);
-        const requestKind = detectRequestKind(queryBar, modelName);
-        const category = MODEL_TO_CATEGORY[modelName] || 'expert';
-        return { modelName, requestKind, category };
+        try {
+            const queryBar = getQueryBar();
+            const modelName = getCurrentModelName(queryBar);
+            const requestKind = detectRequestKind(queryBar, modelName);
+            const category = MODEL_TO_CATEGORY[modelName] || 'expert';
+            return { modelName, requestKind, category };
+        } catch (e) {
+            // A missing composer must not abort the usage render.
+            return {
+                modelName: lastModelName || 'grok-3',
+                requestKind: lastRequestKind || 'DEFAULT',
+                category: lastActiveCategory || 'fast',
+            };
+        }
     }
 
     function requestKindLabel(rk) {
@@ -1834,6 +2074,8 @@
         }
 
         try {
+            await fetchXPlanTier();
+
             let rawWeekly;
             if (useBootstrap) {
                 rawWeekly = await bootstrapWeeklyUsage();
