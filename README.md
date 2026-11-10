@@ -2,9 +2,9 @@
 
 在 [grok.com](https://grok.com) 右下角显示 **每周用量**、**每周 Grok Bot 限额**、**一键重置额度**，以及当前模型（**自动 / 快速 / 专家 / 构建 / 重度**）。适用于 Tampermonkey / Violentmonkey。
 
-A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage**, a separate **weekly Grok Bot limit**, **one-click usage-limit reset**, and **current model** chips for **Auto / Fast / Expert / Build / Heavy**. SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy.
+A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floating panel with **weekly usage**, a separate **weekly Grok Bot limit**, **one-click usage-limit reset**, and **current model** chips for **Auto / Fast / Expert / Build / Heavy**. It keeps the old SuperGrok plans and the new Ultimate AI Subscription tiers apart.
 
-[![Version](https://img.shields.io/badge/version-3.2.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-3.2.4-blue)](.)
 [![Language](https://img.shields.io/badge/language-zh--CN%20%7C%20zh--TW%20%7C%20en-brightgreen)](.)
 [![License](https://img.shields.io/badge/license-GPL--3.0-orange)](https://www.gnu.org/licenses/gpl-3.0.html)
 
@@ -18,6 +18,15 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ## 中文
 
+### 3.2.4 更新
+
+- 适配 grok.com 新版输入栏。模型按钮改成 `Model: Fast` / `模型: 构建` 这类标签后，展开面板不再因找不到旧选择器而空白
+- **旧版订阅和新版订阅分开显示，不会互相改名**
+  - 旧版：SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy
+  - 新版「终极 AI 订阅」：Plus / Premium / Super / Ultra
+- 重度芯片只在 **SuperGrok Heavy** 和 **Ultra** 上解锁
+- 当前模型认可见的模型按钮。选中 **构建 (Build)** 时显示构建，不会因为旁边或隐藏节点上的 Fast 被标成快速
+
 ### 3.2.0 更新
 
 - 新增 **每周 Grok Bot 限额** 进度条，和每周共享用量分开，各自有重置时间
@@ -30,6 +39,8 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 ### 套餐
 
+旧版和新版可以同时存在。脚本按账号接口返回的方案名区分，不用价格页上的文案猜档位。
+
 | 套餐 | 每周用量条 | 重度芯片 |
 |------|------------|----------|
 | **免费 / 游客** | 说明没有每周共享额度 | 锁定 |
@@ -37,6 +48,12 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 | **SuperGrok** | 完整剩余 % + 分类段 | 锁定 |
 | **SuperGrok Plus** | 完整剩余 % + 分类段 | 锁定 |
 | **SuperGrok Heavy** | 完整剩余 % + 分类段 | 解锁 |
+| **Plus** | 完整剩余 % + 分类段 | 锁定 |
+| **Premium** | 完整剩余 % + 分类段 | 锁定 |
+| **Super** | 完整剩余 % + 分类段 | 锁定 |
+| **Ultra** | 完整剩余 % + 分类段 | 解锁 |
+
+Plus / Premium / Super / Ultra 是新版「终极 AI 订阅」的四档，不是 SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy 的别名。
 
 ### 每周用量
 
@@ -64,7 +81,8 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 - 横向胶囊：**自动 · 快速 · 专家 · 构建 · 重度**
 - 选中态轻量高亮（不反色）
-- 重度仅 SuperGrok Heavy 解锁
+- 读取当前可见的模型按钮，包括 `Model: Build`、`模型: 构建`，以及中文 **快速 / 自动 / 专家 / 重度 / 构建**
+- 重度仅 **SuperGrok Heavy** 与 **Ultra** 解锁
 
 ### 最小化
 
@@ -78,6 +96,7 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 
 - **静默刷新**：首次渲染后不再闪「加载中…」，⟳ 只转圈
 - **启动重试**：等待页面 / 登录态，多次重试，避免第一次打开失败
+- 输入栏结构变化时，模型识别失败也不会再把展开内容留白
 - 拦截页面自己的 `GetGrokCreditsConfig` / `GetRemainingResets`
 - 每周网络轮询 **5 分钟**；模型芯片本地更新
 - 发送消息约 4 秒后安静强制刷新
@@ -97,7 +116,7 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 | **每周 Grok Bot 限额** | 独立进度条和重置时间；默认折叠，状态单独记住 |
 | **用量限额重置** | 重置可用卡片 + 兑换（先确认） |
 | **当前模型** | 自动 / 快速 / 专家 / 构建 / 重度 |
-| **套餐徽章** | SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy 等 |
+| **套餐徽章** | 旧版 SuperGrok 四档，以及新版 Plus / Premium / Super / Ultra |
 | **面板** | 拖标题栏 · ⟳ 刷新 · ☀️/🌙 主题 · −/+ 最小化 |
 
 ### 安装
@@ -106,13 +125,13 @@ A Tampermonkey / Violentmonkey userscript for [grok.com](https://grok.com): floa
 2. 从 [Greasy Fork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro) 安装，或把 `grok-quota-display-pro.js` 粘进新脚本。
 3. 登录后打开 https://grok.com ，面板出现在右下角。
 
-**说明**：每周池数字出现在 **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**。免费账户仍有面板和模型芯片，并有明确的免费套餐提示。登录后额度会在后台读出；暂时为空时点 ⟳。
+**说明**：每周池数字出现在旧版 SuperGrok 和新版 Plus / Premium / Super / Ultra。免费账户仍有面板和模型芯片，并有明确的免费套餐提示。登录后额度会在后台读出；暂时为空时点 ⟳。
 
 ### 使用
 
 1. 打开 [grok.com](https://grok.com)。
 2. 面板显示套餐徽章、每周用量、Grok Bot 限额（如有）、重置（如有）和当前模型。两条额度默认折叠，点击卡片可展开。
-3. 在 Grok 选择器里换模型，芯片会本地更新，不闪网络加载。
+3. 在 Grok 选择器里换模型，芯片会本地更新，不闪网络加载。选中构建时，构建芯片亮起。
 4. 有重置时点 **兑换** 并确认，即可清空本周用量。
 5. 拖标题栏移动；可切换主题 / 最小化。最小化是紧凑的 **已用 %** 胶囊。
 
@@ -150,6 +169,15 @@ x-grpc-web: 1
 
 读取剩余重置 token（`tokenId`、`validityEnd`），确认后兑换。
 
+#### 套餐识别
+
+```
+GET /rest/plan/profile
+GET /rest/subscriptions
+```
+
+优先使用接口里的方案显示名。`Plus` / `Premium` / `Super` / `Ultra` 只表示新版。`SuperGrok Lite` / `SuperGrok` / `SuperGrok Plus` / `SuperGrok Heavy` 只表示旧版。两边不会因为底层 id 相同就写成同一个徽章。价格页会同时列出所有档位，所以不用整页文字判断新版套餐。
+
 #### 刷新策略
 
 | 触发 | 行为 |
@@ -182,6 +210,15 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 ## English
 
+### What's New (v3.2.4)
+
+- Works with the updated grok.com composer. The expanded panel no longer stays blank when the model button is labeled `Model: Fast` or `模型: 构建` instead of the old `Model select`
+- **Old and new subscriptions stay separate.** They are not renamed into each other
+  - Legacy: SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy
+  - Ultimate AI Subscription: Plus / Premium / Super / Ultra
+- The Heavy chip unlocks only for **SuperGrok Heavy** and **Ultra**
+- The current-model chip reads the visible model button. **Build** stays Build, and is not labeled Fast because another node still says Fast
+
 ### What's New (v3.2.0)
 
 - New **weekly Grok Bot limit** bar, separate from the shared weekly pool, with its own reset time
@@ -194,6 +231,8 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 ### Tiers
 
+Legacy plans and the new Ultimate AI Subscription can both be active. The badge follows the plan name returned for the account. It does not guess from the pricing page, which lists every tier.
+
 | Tier | Weekly pool bar | Heavy chip |
 |------|-----------------|------------|
 | **Free / Guest** | Explains no weekly shared pool | Locked |
@@ -201,6 +240,12 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 | **SuperGrok** | Full weekly % + product segments | Locked |
 | **SuperGrok Plus** | Full weekly % + product segments | Locked |
 | **SuperGrok Heavy** | Full weekly % + product segments | Unlocked |
+| **Plus** | Full weekly % + product segments | Locked |
+| **Premium** | Full weekly % + product segments | Locked |
+| **Super** | Full weekly % + product segments | Locked |
+| **Ultra** | Full weekly % + product segments | Unlocked |
+
+Plus / Premium / Super / Ultra are the four tiers of the new Ultimate AI Subscription. They are not aliases of SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy.
 
 ### Weekly usage
 
@@ -228,7 +273,8 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 - Horizontal pills: **Auto · Fast · Expert · Build · Heavy**
 - Subtle selected state (no harsh invert)
-- Heavy only for SuperGrok Heavy accounts
+- Reads the visible model button, including `Model: Build`, `模型: 构建`, and the Chinese labels **快速 / 自动 / 专家 / 重度 / 构建**
+- Heavy only for **SuperGrok Heavy** and **Ultra**
 
 ### Minimized mode
 
@@ -242,6 +288,7 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 
 - **Silent refresh** — no “Loading…” flash after first paint; ⟳ only spins
 - **Startup bootstrap** — wait for page/session, multi-retry (avoids first-open failure)
+- A composer markup change can no longer leave the expanded body blank when model detection fails
 - Intercepts page `GetGrokCreditsConfig` / `GetRemainingResets` when Grok loads them
 - Weekly network poll every **5 minutes**; model chips update locally
 - After send: quiet force-refresh ~4s later
@@ -261,7 +308,7 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 | **Weekly Grok Bot limit** | Separate bar and reset time; collapsed by default, state remembered on its own |
 | **Usage-limit reset** | Reset Available card + Redeem (confirm first) |
 | **Current model** | Auto / Fast / Expert / Build / Heavy chips |
-| **Tier badge** | SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy, etc. |
+| **Tier badge** | Legacy SuperGrok tiers, plus Plus / Premium / Super / Ultra |
 | **Panel** | Drag header · ⟳ refresh · ☀️/🌙 theme · −/+ minimize |
 
 ### Installation
@@ -270,15 +317,15 @@ GPL-3.0 — [BExhei/Grok-Quota-Display-Pro](https://github.com/BExhei/Grok-Quota
 2. Install from [Greasy Fork](https://greasyfork.org/zh-CN/scripts/578827-grok-quota-display-pro), or copy `grok-quota-display-pro.js` into a new userscript.
 3. Open https://grok.com while logged in — the panel appears bottom-right.
 
-**Tip**: Weekly pool numbers appear on **SuperGrok Lite / SuperGrok / SuperGrok Plus / SuperGrok Heavy**. Free accounts still get the panel and model chips, with a clear free-tier message. Quotas load in the background after sign-in. If a number is still empty, click ⟳.
+**Tip**: Weekly pool numbers appear on the legacy SuperGrok plans and on Plus / Premium / Super / Ultra. Free accounts still get the panel and model chips, with a clear free-tier message. Quotas load in the background after sign-in. If a number is still empty, click ⟳.
 
 ### Usage
 
 1. Open [grok.com](https://grok.com).
 2. Panel shows tier badge, weekly usage, the Grok Bot limit (when the plan has one), reset (if available), and current model. Both quota cards start collapsed; click a card to expand it.
-3. Switch model in Grok’s selector — chips update without a network flash.
+3. Switch model in Grok’s selector — chips update without a network flash. Choosing Build highlights the Build chip.
 4. If a reset is available, click **Redeem** and confirm to clear this week’s pool.
-5. Drag the header to move; use theme / minimize as needed. Minimized view is a compact **used-%** capsule aligned with the official usage bar.
+5. Drag the header to move; use theme / minimize as needed. Minimized view is a compact **used-%** capsule.
 
 ### Technical Notes
 
@@ -313,6 +360,15 @@ x-grpc-web: 1
 ```
 
 Reads remaining reset tokens (`tokenId`, `validityEnd`) and redeems with confirmation.
+
+#### Plan detection
+
+```
+GET /rest/plan/profile
+GET /rest/subscriptions
+```
+
+The display name from the account wins. `Plus` / `Premium` / `Super` / `Ultra` are only the new Ultimate AI Subscription. `SuperGrok Lite` / `SuperGrok` / `SuperGrok Plus` / `SuperGrok Heavy` are only the legacy plans. Shared internal ids are not cross-labeled. The pricing page lists every tier, so full-page text is not used to name the new plans.
 
 #### Refresh strategy
 
